@@ -1,0 +1,14 @@
+{
+  "name": "Ritual Matcha — Order Desk",
+  "short_name": "Order Desk",
+  "description": "Paste Viber orders, draft Shopify orders, match BPI payments.",
+  "start_url": "/paste",
+  "display": "standalone",
+  "background_color": "#faf7f0",
+  "theme_color": "#1f382e",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

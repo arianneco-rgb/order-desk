@@ -1,0 +1,260 @@
+// Fallback keyword/regex parser (used until ANTHROPIC_API_KEY is set).
+// Turns a pasted Viber message into order lines. All incoming messages are
+// treated as orders — there is no "is this an order?" branch.
+//
+// Unit rules: 1 pouch = 200g · 1 case = 10 pouches = 2kg · 1 kg = 5 pouches.
+// Samples are 20g sachets. Anything uncertain lowers confidence so the order
+// is flagged "Needs review" instead of silently guessing.
+
+import type { CatalogProduct, ItemForm, OrderItem } from "./types";
+import { POUCHES_PER_KG, gramsToPouches } from "./conversions";
+
+export interface ParseResult {
+  items: OrderItem[];
+  /** Human-readable reasons the order needs Joey's attention. */
+  reasons: string[];
+}
+
+const TAGALOG_NUMBERS: Record<string, number> = {
+  isa: 1, isang: 1, dalawa: 2, dalawang: 2, tatlo: 3, tatlong: 3,
+  apat: 4, apat_na: 4, lima: 5, limang: 5, anim: 6, pito: 7, pitong: 7,
+  walo: 8, walong: 8, siyam: 9, sampu: 10, sampung: 10,
+};
+
+const WORD_NUMBERS: Record<string, number> = {
+  one: 1, a: 1, an: 1, two: 2, three: 3, four: 4, five: 5,
+  six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  ...TAGALOG_NUMBERS,
+};
+
+interface QtyMatch {
+  pouches?: number;
+  samples?: number;
+  confidence: number;
+  matched: boolean;
+}
+
+function parseNumberWord(word: string): number | null {
+  const n = Number(word);
+  if (Number.isFinite(n) && n > 0) return n;
+  return WORD_NUMBERS[word] ?? null;
+}
+
+const NUM = "(\\d+(?:\\.\\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|isa(?:ng)?|dalawa(?:ng)?|tatlo(?:ng)?|apat|lima(?:ng)?|anim|pito(?:ng)?|walo(?:ng)?|siyam|sampu(?:ng)?)";
+
+/** Extract a quantity from one message segment. */
+function extractQty(segment: string): QtyMatch {
+  // "2 cases", "1 case", "case of ..." (implicit 1)
+  let m = segment.match(new RegExp(`${NUM}\\s*(?:x\\s*)?(?:cases?|cs|box(?:es)?)\\b`));
+  if (m) {
+    const n = parseNumberWord(m[1]);
+    if (n) return { pouches: Math.round(n * 10), confidence: 1, matched: true };
+  }
+  if (/\b(?:a\s+)?case\s+of\b/.test(segment)) {
+    return { pouches: 10, confidence: 0.9, matched: true };
+  }
+
+  // "5 pouches", "3 packs", "2 bags", "4 pcs"
+  m = segment.match(new RegExp(`${NUM}\\s*(?:x\\s*)?(?:pouch(?:es)?|packs?|bags?|pcs?|pieces?)\\b`));
+  if (m) {
+    const n = parseNumberWord(m[1]);
+    if (n) return { pouches: Math.round(n), confidence: 1, matched: true };
+  }
+
+  // "2 samples", "3 sachets", "2 trial packs"
+  m = segment.match(new RegExp(`${NUM}\\s*(?:x\\s*)?(?:samples?|sachets?|trial)\\b`));
+  if (m) {
+    const n = parseNumberWord(m[1]);
+    if (n) return { samples: Math.round(n), confidence: 1, matched: true };
+  }
+  if (/\bsamples?\b/.test(segment)) {
+    return { samples: 1, confidence: 0.6, matched: true };
+  }
+
+  // Multiplier phrasing: "2 x 200g", "3x1kg" — N units of M grams/kilos.
+  m = segment.match(/(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(kgs?|kilos?|g)\b/);
+  if (m) {
+    const count = Number(m[1]);
+    const size = Number(m[2]);
+    const grams = m[3].startsWith("k") ? size * 1000 : size;
+    if (count > 0 && grams > 0) {
+      if (grams <= 50) {
+        return { samples: count, confidence: 0.8, matched: true };
+      }
+      const pouches = count * gramsToPouches(grams);
+      const rounded = Math.round(pouches);
+      return {
+        pouches: Math.max(1, rounded),
+        confidence: Math.abs(pouches - rounded) < 1e-9 ? 0.95 : 0.5,
+        matched: true,
+      };
+    }
+  }
+
+  // "4kg", "2 kilos", "1.5 kg"
+  m = segment.match(new RegExp(`${NUM}\\s*(?:kgs?|kilos?|kilograms?)\\b`));
+  if (m) {
+    const n = parseNumberWord(m[1]);
+    if (n) {
+      const pouches = n * POUCHES_PER_KG;
+      const rounded = Math.round(pouches);
+      return {
+        pouches: Math.max(1, rounded),
+        confidence: Math.abs(pouches - rounded) < 1e-9 ? 1 : 0.5,
+        matched: true,
+      };
+    }
+  }
+
+  // "600g", "200 grams", "20g" (20g = sample sachet size)
+  m = segment.match(/(\d+(?:\.\d+)?)\s*g(?:rams?)?\b/);
+  if (m) {
+    const grams = Number(m[1]);
+    if (grams > 0) {
+      if (grams <= 50) return { samples: 1, confidence: 0.7, matched: true };
+      const pouches = gramsToPouches(grams);
+      const rounded = Math.round(pouches);
+      return {
+        pouches: Math.max(1, rounded),
+        confidence: Math.abs(pouches - rounded) < 1e-9 ? 1 : 0.5,
+        matched: true,
+      };
+    }
+  }
+
+  // Bare number ("2 kasane" / "kasane 2") — assume pouches, low confidence.
+  m = segment.match(/(?:^|\s)(\d+)(?:\s|$)/);
+  if (m) {
+    const n = Number(m[1]);
+    if (n > 0 && n <= 200) {
+      return { pouches: n, confidence: 0.5, matched: true };
+    }
+  }
+
+  return { confidence: 0, matched: false };
+}
+
+function findProduct(segment: string, catalog: CatalogProduct[]): CatalogProduct | null {
+  // Longest alias wins so "koyo hojicha" beats "koyo" and "hojicha".
+  let best: CatalogProduct | null = null;
+  let bestLen = 0;
+  for (const product of catalog) {
+    for (const alias of product.aliases) {
+      if (segment.includes(alias) && alias.length > bestLen) {
+        best = product;
+        bestLen = alias.length;
+      }
+    }
+  }
+  return best;
+}
+
+/** Split a message into candidate line segments. */
+function segmentMessage(message: string): string[] {
+  return message
+    .toLowerCase()
+    .split(/\n|,|;|\+|&|\band\b/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** True when the segment looks like it wanted to order something we missed. */
+function looksOrderLike(segment: string): boolean {
+  return /\d/.test(segment) || /\b(case|pouch|pack|kg|kilo|sample|order)\b/.test(segment);
+}
+
+const NOISE_PATTERNS = [
+  /^(hi|hello|hey|good\s*(am|pm|morning|afternoon|evening)|thank(s| you).*|pa[- ]?order|order|pwede|paki|please|pls|po|opo|yes|sige|same day.*|asap.*)$/,
+];
+
+export function parseMessage(
+  message: string,
+  catalog: CatalogProduct[]
+): ParseResult {
+  const reasons: string[] = [];
+  const items: OrderItem[] = [];
+  const segments = segmentMessage(message);
+
+  // A qty with no product ("1 case" in "1 case and 3 pouches of kasane")
+  // carries over to the next segment that names a product.
+  let pendingQty: QtyMatch | null = null;
+
+  for (const segment of segments) {
+    const product = findProduct(segment, catalog);
+    const qty = extractQty(segment);
+
+    if (!product) {
+      if (qty.matched && (qty.pouches || qty.samples)) {
+        pendingQty = qty;
+      } else if (
+        looksOrderLike(segment) &&
+        !NOISE_PATTERNS.some((p) => p.test(segment))
+      ) {
+        reasons.push(`Could not read: “${segment}”`);
+      }
+      continue;
+    }
+
+    let pouches = qty.pouches ?? 0;
+    let samples = qty.samples ?? 0;
+    let confidence = qty.matched ? qty.confidence : 0;
+
+    // Segment names a product but no quantity → assume 1 pouch, flag it.
+    if (!qty.matched) {
+      if (/\bsamples?\b/.test(segment)) {
+        samples = 1;
+        confidence = 0.6;
+      } else {
+        pouches = 1;
+        confidence = 0.3;
+        reasons.push(`No quantity found for ${product.title} — assumed 1 pouch`);
+      }
+    }
+
+    if (pendingQty) {
+      pouches += pendingQty.pouches ?? 0;
+      samples += pendingQty.samples ?? 0;
+      confidence = Math.min(confidence || 1, pendingQty.confidence, 0.8);
+      pendingQty = null;
+    }
+
+    if (pouches > 0) upsert(items, product.key, "pouch", pouches, confidence);
+    if (samples > 0) upsert(items, product.key, "sample", samples, confidence);
+  }
+
+  // "the usual" / repeat orders — the fallback parser can't see history.
+  if (/\b(the )?usual\b|same as (last|before)|ulit\b|same order/i.test(message)) {
+    reasons.push(
+      "Looks like a repeat order (“the usual”) — check this cafe's history and fill the lines in manually."
+    );
+  }
+
+  if (items.length === 0) {
+    reasons.push("No line items recognized — add them manually.");
+  }
+
+  for (const item of items) {
+    if (item.confidence < 0.7) {
+      reasons.push("Low-confidence quantity on one or more lines — double-check.");
+      break;
+    }
+  }
+
+  return { items, reasons };
+}
+
+function upsert(
+  items: OrderItem[],
+  productKey: string,
+  form: ItemForm,
+  qty: number,
+  confidence: number
+) {
+  const existing = items.find((i) => i.productKey === productKey && i.form === form);
+  if (existing) {
+    existing.qty += qty;
+    existing.confidence = Math.min(existing.confidence, confidence);
+  } else {
+    items.push({ productKey, form, qty, confidence });
+  }
+}
