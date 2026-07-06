@@ -1,6 +1,8 @@
 // Every integration checks its own env var independently.
 // Missing var = mock/snapshot mode, so the whole app runs with zero setup.
 
+import { appsScriptConfigured } from "./apps-script";
+
 export type ShopifyMode = "live" | "snapshot";
 export type SheetsMode = "live" | "mock";
 export type ParserMode = "claude" | "fallback";
@@ -18,7 +20,7 @@ export function shopifyMode(): ShopifyMode {
 }
 
 export function sheetsMode(): SheetsMode {
-  return process.env.GOOGLE_SA_JSON && process.env.SHEET_ID ? "live" : "mock";
+  return appsScriptConfigured() && Boolean(process.env.SHEET_ID) ? "live" : "mock";
 }
 
 export function parserMode(): ParserMode {
@@ -26,14 +28,11 @@ export function parserMode(): ParserMode {
 }
 
 export function bpiMode(): BpiMode {
-  // Reuses the Sheets service account (GOOGLE_SA_JSON) unless a dedicated
-  // one is given — either way, that service account needs domain-wide
-  // delegation + the gmail.readonly scope authorized in the Google
-  // Workspace admin console, and BPI_GMAIL_USER is the mailbox to read.
-  const hasServiceAccount = Boolean(
-    process.env.BPI_GMAIL_SA_JSON || process.env.GOOGLE_SA_JSON
-  );
-  return hasServiceAccount && process.env.BPI_GMAIL_USER ? "live" : "simulated";
+  // Same Apps Script bridge as Sheets — it searches Gmail under the
+  // deploying Google account's own permissions (see scripts/apps-script/Code.gs).
+  // Whoever deployed it must be the account that receives BPI transfer
+  // notification emails.
+  return appsScriptConfigured() ? "live" : "simulated";
 }
 
 export function dbMode(): DbMode {

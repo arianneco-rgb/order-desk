@@ -87,32 +87,58 @@ and real "mark paid."
 
 ---
 
-## 2. Google Sheets — service account + sharing
+## 2. Google Sheets + BPI — deploy the Apps Script bridge
 
-The app talks to Sheets as a **service account**, not as your personal
-Google login — this is the standard way to let a server-side app read/write
-one specific spreadsheet without giving it your whole Drive.
+A Cloud service account was the original plan here, but if your Workspace
+admin blocks **domain-wide delegation** (ours did), that path is a dead
+end — there's no way around it as a non-admin. Instead, the app talks to a
+**Google Apps Script Web App** that you deploy under your own regular
+Google account. Apps Script runs with *your* normal permissions, so it can
+read/write the spreadsheet and search your Gmail with zero admin approval.
 
-1. Go to **console.cloud.google.com** → create a project (e.g. "RMC Order Desk") or reuse an existing one.
-2. **APIs & Services → Library** → enable **Google Sheets API**.
-3. **APIs & Services → Credentials → Create Credentials → Service Account**.
-   - Name it `order-desk-sheets`.
-   - No project roles needed (access is granted per-file via sharing, next step).
-4. Open the new service account → **Keys → Add key → Create new key → JSON**. This downloads a `.json` file — treat it like a password.
-5. Open that JSON file and copy the `client_email` value (looks like `order-desk-sheets@your-project.iam.gserviceaccount.com`).
-6. Open the spreadsheet (`1-51E1TzDLNQzjnpPxqE6BmJ5Pj6cALFcNg5-bguF45E`) → **Share** → paste that service-account email → give it **Editor** → Send (uncheck "notify," it's not a real inbox).
-7. In `.env.local`, set `SHEET_ID` and the **entire JSON file contents as one line**:
+This one deployment covers **both** the Sheets sync (step 2) and BPI email
+matching (step 5) — you only need to do this once.
+
+1. Go to **script.google.com** → **New project**.
+2. Delete the placeholder `Code.gs` content, and paste in the full contents
+   of this repo's [`scripts/apps-script/Code.gs`](scripts/apps-script/Code.gs).
+3. At the top of the pasted script, fill in the two constants:
+   ```js
+   const SHEET_ID = '1-51E1TzDLNQzjnpPxqE6BmJ5Pj6cALFcNg5-bguF45E';
+   const SECRET_KEY = 'paste-a-long-random-string-here';
+   ```
+   Generate `SECRET_KEY` with `openssl rand -hex 24` — it's a shared
+   password between the app and the script (Apps Script Web Apps have no
+   built-in auth of their own).
+4. **Deploy → New deployment** → gear icon → type **Web app**:
+   - Execute as: **Me**
+   - Who has access: **Anyone**
+   - Deploy → it'll ask you to authorize access to Sheets/Gmail under your
+     own account → allow it (this is you granting the script access to
+     your own data, not a third party).
+   - Copy the **Web app URL** (ends in `/exec`).
+5. In `.env.local`:
    ```
    SHEET_ID=1-51E1TzDLNQzjnpPxqE6BmJ5Pj6cALFcNg5-bguF45E
-   GOOGLE_SA_JSON={"type":"service_account","project_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n", ...}
+   APPS_SCRIPT_URL=https://script.google.com/macros/s/.../exec
+   APPS_SCRIPT_SECRET=the-same-secret-you-put-in-SECRET_KEY
    ```
-   Easiest way to get it onto one line: `cat your-key-file.json | pbcopy` (Mac) then paste after `GOOGLE_SA_JSON=`.
+
+**Important:** whichever Google account you're logged into when you deploy
+is the account the script acts as — both for writing to the spreadsheet
+*and* for BPI's Gmail search (step 5). If BPI transfer notifications land
+in a different inbox than the one you deploy from, BPI matching won't see
+them even though Sheets sync still works fine.
+
+**Whenever you edit `Code.gs`** (e.g. tuning the BPI regexes in step 5),
+you need to publish a **new version**: **Deploy → Manage deployments** →
+edit (pencil icon) → **Version: New version** → Deploy. Saving alone does
+not republish the live URL.
 
 **What this unlocks:** the Paste page's cafe dropdown reads from the
 `Customers` tab (synced one-way from Shopify), and every paid order appends
-a row to `Order History`. The first time the app talks to Sheets, it
-automatically renames the current single tab to `Customers` and creates the
-`Order History` tab — you don't need to do that by hand.
+a row to `Order History`. The first live call auto-creates both tabs with
+headers if they don't already exist — you don't need to set that up by hand.
 
 ---
 
@@ -141,8 +167,9 @@ whenever you're ready, independently of each other:
 - **`ANTHROPIC_API_KEY`** — replaces the keyword/regex fallback parser with
   Claude for reading pasted messages. Get a key at console.anthropic.com.
 - **BPI email matching** — connects the real BPI notification mailbox
-  instead of the simulated inbox. See step 5 below (its own step, since it
-  needs a Google Workspace admin action, not just an env var).
+  instead of the simulated inbox. Uses the same Apps Script deployment from
+  step 2 — see step 5 below for the mailbox-specific details (which account
+  to deploy from, and tuning the parsing regexes).
 - **Supabase** — replaces the in-memory store (which resets whenever the
   server restarts) with a real database. Credentials can be saved to
   `.env.local` ahead of time, but the actual persistence code
@@ -151,45 +178,37 @@ whenever you're ready, independently of each other:
 
 ---
 
-## 5. BPI email matching — Gmail via a service account
+## 5. BPI email matching — via the same Apps Script bridge
 
-No IMAP, no mailbox password. A Google service account reads one mailbox
-**read-only** via the Gmail API, using the same trust model as the Sheets
-service account — just a different scope, plus "domain-wide delegation" so
-it can impersonate a specific mailbox instead of only accessing files
-explicitly shared with it.
+No IMAP, no mailbox password, no service account. The Apps Script deployed
+in step 2 reads Gmail using `GmailApp.search(...)`, which always searches
+**the mailbox of whichever Google account deployed the script** — that's
+Apps Script's own security model, not something this app configures.
 
 1. Decide which mailbox actually receives BPI transfer notifications (e.g.
-   `payments@ritualmatcha.ph`). This must be a mailbox in your Google
-   Workspace domain — personal Gmail accounts can't be delegated this way.
-2. You can reuse the **same service account** already created for Sheets
-   (step 2) — no need for a second one, as long as your Workspace admin
-   authorizes the extra scope in the next step.
-3. As a **Google Workspace admin**, go to **admin.google.com → Security →
-   API controls → Domain-wide Delegation → Add new**:
-   - Client ID: the service account's numeric client ID (in the same JSON
-     key file as `client_email`/`private_key` — look for the `client_id`
-     field, or find it on the service account's page in Google Cloud
-     Console).
-   - OAuth scopes: `https://www.googleapis.com/auth/gmail.readonly`
-   - Authorize.
-4. In `.env.local`:
-   ```
-   BPI_GMAIL_USER=payments@ritualmatcha.ph
-   ```
-   (Leave `BPI_GMAIL_SA_JSON` blank to reuse `GOOGLE_SA_JSON` from step 2, or
-   set it separately if you'd rather use a dedicated service account.)
+   `payments@ritualmatcha.ph`).
+2. If that's the **same** account you used to deploy in step 2, you're
+   already done — skip to the note below.
+3. If it's a **different** account, log into that account in the browser
+   and redeploy step 2's `Code.gs` from *that* account instead (Apps Script
+   projects are tied to whichever account created them). Update
+   `APPS_SCRIPT_URL`/`APPS_SCRIPT_SECRET` in `.env.local` if the URL
+   changes.
+4. Optionally set `BPI_EMAIL_QUERY` in `.env.local` to override the default
+   Gmail search (see `searchBpi()` in `Code.gs`) once you know BPI's exact
+   sender address or subject format.
 
-**Heads up on parsing accuracy:** `lib/bpi.ts` searches the mailbox with a
+**Heads up on parsing accuracy:** `Code.gs`'s `searchBpi()` searches with a
 broad, best-effort query and extracts amount/sender/reference with regexes
 based on typical PH bank transfer wording — **not verified against an
 actual BPI notification email**, since none was available while building
 this. Once real emails start landing, forward one (or paste the text) so
-the regexes in `lib/bpi.ts` (`extractAmount`, `extractSenderName`,
-`extractReference`) can be tuned to BPI's exact format. Until then, expect
-some real transfers to come back as "no match" even though the email
-arrived — that's a parsing-accuracy gap, not a bug in the matching logic
-itself (which is unchanged and already used by the simulated inbox).
+the regexes in `Code.gs` can be tuned to BPI's exact format, then **publish
+a new Apps Script deployment version** (see step 2's note on this). Until
+then, expect some real transfers to come back as "no match" even though the
+email arrived — that's a parsing-accuracy gap, not a bug in the matching
+logic itself (`findMatch` in `lib/bpi.ts`, unchanged and already used by the
+simulated inbox).
 
 ---
 
@@ -228,10 +247,10 @@ Before Joey uses it for real:
 4. Click **Confirm · create draft** → open the linked draft in Shopify admin
    → confirm the line items, customer, and currency (PHP) are correct.
 5. Have the cafe actually pay (or simulate it if it's not a real order) →
-   upload the proof → check the BPI match (real inbox once step 5's BPI env
-   vars are set; otherwise this will show "no match" since the simulated
-   inbox only knows about mock drafts — use "I verified this transfer
-   manually" to test the confirm-payment path).
+   upload the proof → check the BPI match (real inbox once step 2/5's
+   `APPS_SCRIPT_URL`/`APPS_SCRIPT_SECRET` are set; otherwise this will show
+   "no match" since the simulated inbox only knows about mock drafts — use
+   "I verified this transfer manually" to test the confirm-payment path).
 6. Confirm payment → verify in Shopify that the order shows paid, and check
    the `Order History` tab in the Google Sheet for the new row.
 7. Check `/history` shows it.
@@ -249,9 +268,9 @@ If all seven check out, you're live.
 4. **Environment Variables** → add every var from your `.env.local`
    (`SHOPIFY_STORE`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` (or
    `SHOPIFY_ADMIN_TOKEN` if you're on the older admin-created app path),
-   `SHEET_ID`, `GOOGLE_SA_JSON`, `DASHBOARD_PASSWORD`, `AUTH_SECRET`, plus
-   any of the optional ones from step 4 you've turned on). Paste
-   `GOOGLE_SA_JSON` as the single-line JSON string, same as locally.
+   `SHEET_ID`, `APPS_SCRIPT_URL`, `APPS_SCRIPT_SECRET`,
+   `DASHBOARD_PASSWORD`, `AUTH_SECRET`, plus any of the optional ones from
+   step 4 you've turned on).
 5. Deploy. Vercel gives you a `*.vercel.app` URL immediately.
 6. **Optional custom domain** (e.g. `orders.ritualmatcha.ph`): Vercel project
    → Settings → Domains → add the subdomain → add the CNAME record it shows
@@ -284,13 +303,12 @@ SHOPIFY_CLIENT_SECRET=shpss_...
 SHOPIFY_ADMIN_TOKEN=shpat_...
 
 SHEET_ID=1-51E1TzDLNQzjnpPxqE6BmJ5Pj6cALFcNg5-bguF45E
-GOOGLE_SA_JSON={"type":"service_account", ...}
+APPS_SCRIPT_URL=https://script.google.com/macros/s/.../exec
+APPS_SCRIPT_SECRET=...
 DASHBOARD_PASSWORD=...
 AUTH_SECRET=...
 # optional, later:
 ANTHROPIC_API_KEY=
-BPI_GMAIL_SA_JSON=
-BPI_GMAIL_USER=
 BPI_EMAIL_QUERY=
 SUPABASE_URL=
 SUPABASE_PUBLISHABLE_KEY=

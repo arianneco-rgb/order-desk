@@ -27,9 +27,9 @@ Every integration checks its own env var; missing var = mock. Mix freely.
 | Layer | Env switch | Without it (default) |
 |---|---|---|
 | Shopify | `SHOPIFY_STORE` + (`SHOPIFY_CLIENT_ID`+`SHOPIFY_CLIENT_SECRET`, or `SHOPIFY_ADMIN_TOKEN`) | Real **snapshot** of the ritualmatcha.ph catalog + 143 wholesale cafes (2026-07-02); draft orders are mocked |
-| Google Sheets | `GOOGLE_SA_JSON` + `SHEET_ID` | In-memory mirror |
+| Google Sheets | `APPS_SCRIPT_URL` + `APPS_SCRIPT_SECRET` + `SHEET_ID` | In-memory mirror |
 | Claude parsing | `ANTHROPIC_API_KEY` *(later phase)* | Keyword/regex fallback parser |
-| BPI email | `BPI_GMAIL_USER` + a Google service account *(reuses `GOOGLE_SA_JSON`)* | Simulated inbox (a matching transfer "arrives" ~8s after a draft is created) |
+| BPI email | Same `APPS_SCRIPT_URL`/`APPS_SCRIPT_SECRET` *(reads the deploying Google account's own Gmail)* | Simulated inbox (a matching transfer "arrives" ~8s after a draft is created) |
 | Database | `SUPABASE_*` *(credentials only — persistence code not built yet)* | In-memory (resets on restart) |
 | Auth | `DASHBOARD_PASSWORD` (+ `AUTH_SECRET`) | Auth disabled (local dev only) |
 
@@ -61,15 +61,18 @@ the dropdown) and **Order History** (a row per paid order; History reads it):
   `SHEET_ID = 1-51E1TzDLNQzjnpPxqE6BmJ5Pj6cALFcNg5-bguF45E` (owned by
   `arianne.co@ritualmatcha.ph`).
 - Seeded with all 143 wholesale cafes from Shopify (2026-07-02).
-- On the first live run the app renames the imported tab to `Customers` and
-  adds `Order History` automatically (`lib/sheets.ts → ensureTabs`). Sync is
-  one-way (Shopify → Sheet); editing the sheet does not push back to Shopify.
+- On the first live call the deployed Apps Script auto-creates both
+  `Customers` and `Order History` tabs with headers if they don't already
+  exist (`scripts/apps-script/Code.gs`). Sync is one-way (Shopify → Sheet);
+  editing the sheet does not push back to Shopify.
 - Two malformed duplicate copies (`&amp;` literally in the title, an
   escaping bug while I was uploading) are sitting in the same Drive folder —
   safe to delete, see [SETUP.md](SETUP.md) for their file IDs.
-- To go live: see [SETUP.md](SETUP.md) step 2 (create a Google Cloud service
-  account, share the spreadsheet with its email as **Editor**, set
-  `GOOGLE_SA_JSON` + `SHEET_ID`).
+- To go live: see [SETUP.md](SETUP.md) step 2 — deploy
+  [`scripts/apps-script/Code.gs`](scripts/apps-script/Code.gs) as a Google
+  Apps Script Web App under your own Google account (no Cloud service
+  account or Workspace admin approval needed), then set `APPS_SCRIPT_URL` +
+  `APPS_SCRIPT_SECRET` + `SHEET_ID`.
 
 ## ⚠️ Shopify: this points at the production store
 
