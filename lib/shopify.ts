@@ -20,7 +20,8 @@
 import { shopifyMode } from "./config";
 import { CATALOG_SNAPSHOT } from "./catalog-snapshot";
 import { CUSTOMERS_SNAPSHOT } from "./customers-snapshot";
-import { addRuntimeCustomer, nextId, runtimeCustomers } from "./store";
+import { joinNaturally, plural } from "./conversions";
+import { addRuntimeCustomer, historyRows, nextId, runtimeCustomers } from "./store";
 import type {
   CafeCustomer,
   CatalogProduct,
@@ -255,7 +256,7 @@ function matchSnapshotKey(title: string): string {
 
 export async function getCafeCustomers(): Promise<CafeCustomer[]> {
   if (shopifyMode() === "snapshot") {
-    return [...CUSTOMERS_SNAPSHOT, ...runtimeCustomers()].sort((a, b) =>
+    return [...CUSTOMERS_SNAPSHOT, ...(await runtimeCustomers())].sort((a, b) =>
       a.name.localeCompare(b.name)
     );
   }
@@ -304,6 +305,94 @@ export async function getCafeCustomers(): Promise<CafeCustomer[]> {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export interface PastOrder {
+  /** Shopify order name, e.g. "#5023" (empty in snapshot mode). */
+  name: string;
+  date: string;
+  status: string;
+  total: number;
+  /** "2 cases of Kasane and 3 pouches of Yasumi" — display AND parser-friendly. */
+  itemsText: string;
+}
+
+/** "Case (10 x 200g)" + qty 2 → "2 cases of Kasane" — wording the parser reads back. */
+function describeShopifyLine(qty: number, title: string, variantTitle: string | null): string {
+  const v = (variantTitle ?? "").toLowerCase();
+  if (v.includes("case")) return `${plural(qty, "case")} of ${title}`;
+  if (v.includes("sample") || /\b(20|50)\s*g\b/.test(v)) return `${plural(qty, "sample")} of ${title}`;
+  if (/\b1\s*kg\b/.test(v)) return `${qty} kg of ${title}`;
+  return `${plural(qty, "pouch")} of ${title}`;
+}
+
+/**
+ * A cafe's real order history, straight from Shopify — includes orders that
+ * never went through this dashboard. Snapshot mode falls back to the app's
+ * own history rows for that cafe.
+ */
+export async function getCustomerPastOrders(
+  customerId: string,
+  company: string,
+  limit = 5
+): Promise<PastOrder[]> {
+  if (shopifyMode() === "snapshot" || customerId.startsWith("mock:")) {
+    const needle = company.trim().toLowerCase();
+    return (await historyRows())
+      .filter((r) => r.company.trim().toLowerCase() === needle)
+      .slice(0, limit)
+      .map((r) => ({
+        name: r.shopifyDraftName ?? "",
+        date: r.paidAt,
+        status: "PAID",
+        total: r.total,
+        itemsText: r.items,
+      }));
+  }
+
+  const data = await adminGraphQL<{
+    customer: {
+      orders: {
+        edges: {
+          node: {
+            name: string;
+            createdAt: string;
+            displayFinancialStatus: string | null;
+            currentTotalPriceSet: { shopMoney: { amount: string } };
+            lineItems: {
+              edges: { node: { title: string; quantity: number; variantTitle: string | null } }[];
+            };
+          };
+        }[];
+      };
+    } | null;
+  }>(
+    `query($id: ID!, $first: Int!) {
+      customer(id: $id) {
+        orders(first: $first, sortKey: CREATED_AT, reverse: true) {
+          edges { node {
+            name createdAt displayFinancialStatus
+            currentTotalPriceSet { shopMoney { amount } }
+            lineItems(first: 20) { edges { node { title quantity variantTitle } } }
+          } }
+        }
+      }
+    }`,
+    { id: customerId, first: limit }
+  );
+  if (!data.customer) return [];
+
+  return data.customer.orders.edges.map(({ node }) => ({
+    name: node.name,
+    date: node.createdAt,
+    status: node.displayFinancialStatus ?? "",
+    total: Number(node.currentTotalPriceSet.shopMoney.amount) || 0,
+    itemsText: joinNaturally(
+      node.lineItems.edges.map(({ node: li }) =>
+        describeShopifyLine(li.quantity, li.title, li.variantTitle)
+      )
+    ),
+  }));
+}
+
 export async function createCafeCustomer(input: {
   cafeName: string;
   contactName?: string;
@@ -318,7 +407,7 @@ export async function createCafeCustomer(input: {
       email: input.email,
       phone: input.phone,
     };
-    addRuntimeCustomer(customer);
+    await addRuntimeCustomer(customer);
     return customer;
   }
 
@@ -421,12 +510,17 @@ export async function createDraftOrder(
   order: Order,
   lineItems: DraftLineItem[]
 ): Promise<DraftResult> {
-  if (shopifyMode() === "snapshot") {
+  // Test-mode orders still price against real Shopify data (getCatalog,
+  // getCafeCustomers) — only the WRITE is faked, same mock: id path as
+  // snapshot mode. completeDraftAsPaid() below then skips its own Shopify
+  // call too, since it keys off the "mock:" prefix, not shopifyMode().
+  if (shopifyMode() === "snapshot" || order.isTest) {
     const n = nextId("d_").replace("d_", "");
+    const suffix = order.isTest ? "test" : "mock";
     return {
       draftId: `mock:DraftOrder:${n}`,
-      draftName: `#D${n} (mock)`,
-      draftUrl: undefined, // no live store — nothing to link to
+      draftName: `#D${n} (${suffix})`,
+      draftUrl: undefined, // no real draft — nothing to link to
     };
   }
 

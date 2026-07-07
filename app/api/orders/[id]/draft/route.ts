@@ -10,15 +10,17 @@ export async function POST(
   _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  // Synchronous claim BEFORE any await — a double-submit can't create two drafts.
-  if (!tryLockOrder(params.id)) {
+  // Claim BEFORE any other await — a double-submit can't create two drafts.
+  // In Supabase mode this is an atomic UPDATE ... WHERE locked_at IS NULL,
+  // so the guarantee holds even across multiple serverless instances.
+  if (!(await tryLockOrder(params.id))) {
     return NextResponse.json(
       { error: "Already working on this order — try again in a moment." },
       { status: 409 }
     );
   }
   try {
-    const order = getOrder(params.id);
+    const order = await getOrder(params.id);
     if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
     if (order.status !== "processed") {
       return NextResponse.json(
@@ -43,7 +45,7 @@ export async function POST(
     order.shopifyDraftUrl = draft.draftUrl;
     order.draftCreatedAt = new Date().toISOString();
     order.status = "draft_created";
-    saveOrder(order);
+    await saveOrder(order);
     return NextResponse.json({ order });
   } catch (err) {
     return NextResponse.json(
@@ -51,6 +53,6 @@ export async function POST(
       { status: 502 }
     );
   } finally {
-    unlockOrder(params.id);
+    await unlockOrder(params.id);
   }
 }

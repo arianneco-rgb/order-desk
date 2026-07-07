@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { OrderHistoryRow } from "@/lib/types";
 import { formatPeso } from "@/lib/conversions";
 import { StatusPill } from "@/components/StatusPill";
+import { TestBadge } from "@/components/TestBadge";
 import { SkeletonCard } from "@/components/Skeleton";
 
 const POLL_MS = 10_000;
@@ -196,7 +197,7 @@ export default function HistoryPage() {
           <h2 className="text-base font-semibold text-forest-900">
             History · completed orders{" "}
             <span className="font-normal text-forest-500">
-              (from the Order History sheet)
+              (mirrored to the Order History sheet)
             </span>
           </h2>
           <input
@@ -229,8 +230,9 @@ export default function HistoryPage() {
               >
                 <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-base font-semibold text-forest-900">
+                    <p className="flex items-center gap-1.5 truncate text-base font-semibold text-forest-900">
                       {row.company}
+                      {row.isTest && <TestBadge />}
                     </p>
                     <p className="mt-0.5 truncate text-sm text-forest-600">
                       {row.items || "—"}

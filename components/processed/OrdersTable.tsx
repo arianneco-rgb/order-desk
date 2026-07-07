@@ -4,6 +4,7 @@ import clsx from "clsx";
 import type { Order } from "@/lib/types";
 import { formatPeso } from "@/lib/conversions";
 import { StatusPill } from "@/components/StatusPill";
+import { TestBadge } from "@/components/TestBadge";
 import { itemLines, type TitleMap } from "./format";
 
 /** Table view of processed / draft-created orders. Rows select the order. */
@@ -58,7 +59,10 @@ export function OrdersTable({
                   {formatPeso(order.total)}
                 </td>
                 <td className="px-4 py-3">
-                  <StatusPill order={order} />
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {order.isTest && <TestBadge />}
+                    <StatusPill order={order} />
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-forest-400">›</td>
               </tr>

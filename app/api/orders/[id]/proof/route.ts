@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrder, saveOrder } from "@/lib/store";
+import { analyzeProof, proofReaderEnabled } from "@/lib/proof-reader";
+import type { ProofOfPayment } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +15,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const order = getOrder(params.id);
+  const order = await getOrder(params.id);
   if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
 
   const body = (await request.json().catch(() => ({}))) as {
@@ -37,13 +39,25 @@ export async function POST(
       { status: 400 }
     );
   }
-  proofs.push({
+  const proof: ProofOfPayment = {
     url: body.dataUrl,
     name: body.fileName || `proof-${proofs.length + 1}`,
     uploadedAt: new Date().toISOString(),
-  });
+  };
+
+  // Best-effort screenshot reading (key-gated) — annotates the proof with
+  // what Claude could read off it. A reader failure never blocks the upload.
+  if (proofReaderEnabled()) {
+    try {
+      proof.analysis = (await analyzeProof(body.dataUrl)) ?? undefined;
+    } catch (err) {
+      console.error("Proof analysis failed:", err);
+    }
+  }
+
+  proofs.push(proof);
   order.payment.proofs = proofs;
-  saveOrder(order);
+  await saveOrder(order);
   return NextResponse.json({ order });
 }
 
@@ -52,7 +66,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const order = getOrder(params.id);
+  const order = await getOrder(params.id);
   if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
   const body = (await request.json().catch(() => ({}))) as { index?: number };
   const proofs = order.payment.proofs ?? [];
@@ -66,6 +80,6 @@ export async function DELETE(
   }
   proofs.splice(body.index, 1);
   order.payment.proofs = proofs;
-  saveOrder(order);
+  await saveOrder(order);
   return NextResponse.json({ order });
 }

@@ -28,13 +28,44 @@ export function Nav() {
   const [modes, setModes] = useState<Modes | null>(null);
   const [counts, setCounts] = useState<Counts | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [testMode, setTestModeState] = useState(false);
+  const [togglingTestMode, setTogglingTestMode] = useState(false);
 
   useEffect(() => {
     fetch("/api/meta")
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => d && setModes(d.modes))
+      .then((d) => {
+        if (!d) return;
+        setModes(d.modes);
+        setTestModeState(Boolean(d.testMode));
+      })
       .catch(() => {});
   }, []);
+
+  async function toggleTestMode() {
+    const next = !testMode;
+    if (
+      next &&
+      !window.confirm(
+        "Turn on test mode? While it's on, EVERY order — including real ones pasted by anyone using the dashboard — skips the real Shopify draft/payment and the Sheet mirror. Turn it off when you're done testing."
+      )
+    ) {
+      return;
+    }
+    setTogglingTestMode(true);
+    try {
+      const res = await fetch("/api/settings/test-mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (res.ok) setTestModeState(next);
+    } catch {
+      // Leave the switch as-is — the user can retry.
+    } finally {
+      setTogglingTestMode(false);
+    }
+  }
 
   // Tab count pills (queue = parsing now, processed = awaiting Joey, history = paid).
   useEffect(() => {
@@ -121,6 +152,34 @@ export function Nav() {
     </span>
   );
 
+  const testModeSwitch = (
+    <button
+      type="button"
+      onClick={toggleTestMode}
+      disabled={togglingTestMode}
+      title="Test mode: new orders skip the real Shopify draft/payment and the Sheet mirror"
+      className={clsx(
+        "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors disabled:opacity-60",
+        testMode ? "bg-amber-500 text-white" : "bg-forest-800 text-forest-200 hover:bg-forest-700"
+      )}
+    >
+      <span
+        className={clsx(
+          "flex h-3.5 w-6 items-center rounded-full transition-colors",
+          testMode ? "bg-amber-800/60" : "bg-forest-600"
+        )}
+      >
+        <span
+          className={clsx(
+            "h-2.5 w-2.5 rounded-full bg-white transition-transform",
+            testMode ? "translate-x-3" : "translate-x-0.5"
+          )}
+        />
+      </span>
+      Test mode {testMode ? "ON" : "off"}
+    </button>
+  );
+
   return (
     <header className="sticky top-0 z-40 border-b border-forest-800/20 bg-forest-900 text-cream shadow-sm">
       <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:gap-6 sm:px-6">
@@ -175,7 +234,10 @@ export function Nav() {
             );
           })}
         </nav>
-        <div className="hidden shrink-0 lg:block">{modeBadge}</div>
+        <div className="hidden shrink-0 items-center gap-2 lg:flex">
+          {testModeSwitch}
+          {modeBadge}
+        </div>
 
         {/* Mobile/tablet hamburger toggle (below lg) */}
         <button
@@ -235,8 +297,24 @@ export function Nav() {
               );
             })}
           </div>
-          {modeBadge && <div className="mt-3 flex">{modeBadge}</div>}
+          {(modeBadge || testModeSwitch) && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {testModeSwitch}
+              {modeBadge}
+            </div>
+          )}
         </nav>
+      )}
+
+      {/* Impossible-to-miss banner while test mode is on — every page, not
+          just the nav. New orders skip real Shopify writes + the Sheet mirror. */}
+      {testMode && (
+        <div className="border-t border-amber-700 bg-amber-500 px-4 py-1.5 text-center text-xs font-semibold text-amber-950 sm:px-6">
+          🧪 TEST MODE — new orders will NOT create real Shopify drafts/payments or write to the Sheet.{" "}
+          <button type="button" onClick={toggleTestMode} className="underline hover:no-underline">
+            Turn off
+          </button>
+        </div>
       )}
     </header>
   );

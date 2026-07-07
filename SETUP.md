@@ -170,11 +170,12 @@ whenever you're ready, independently of each other:
   instead of the simulated inbox. Uses the same Apps Script deployment from
   step 2 — see step 5 below for the mailbox-specific details (which account
   to deploy from, and tuning the parsing regexes).
-- **Supabase** — replaces the in-memory store (which resets whenever the
-  server restarts) with a real database. Credentials can be saved to
-  `.env.local` ahead of time, but the actual persistence code
-  (`lib/store.ts`) isn't built yet — that's a separate task. **Recommended
-  before daily production use on Vercel** — see the note in step 5.
+- **Supabase** — DONE (2026-07-06). Orders, runtime customers, and the
+  order-history mirror persist in Supabase whenever `SUPABASE_URL` +
+  `SUPABASE_SECRET_KEY` are set (`lib/store.ts`). Tables were created from
+  `scripts/db/schema.sql` with row-level security on (no policies — only
+  the server's secret key can touch them). If you ever recreate the
+  project, re-run that file in the Supabase SQL Editor.
 
 ---
 
@@ -224,13 +225,10 @@ Open `http://localhost:3000` (or whatever port it prints), log in with
 `DASHBOARD_PASSWORD`, and confirm the footer badge in the nav no longer says
 "Demo data in use."
 
-> **Important gap in this phase:** the in-memory order store resets on every
-> server restart/redeploy. That's fine for local testing, but on Vercel each
-> serverless function invocation can even get a fresh instance — meaning
-> orders could disappear mid-flow in production. **Set up Supabase before
-> relying on this daily** (see step 4 — credentials may already be saved,
-> but the persistence code itself still needs to be built), or accept that
-> it's a "test it live, but don't trust it as your only record yet" phase.
+> **Persistence:** with the Supabase env vars set (step 4 — already done),
+> orders survive restarts and redeploys, including across Vercel's
+> serverless instances. If those vars are ever removed, the store silently
+> falls back to in-memory (resets on restart) — fine for local demos only.
 > The Google Sheet is your durable Order History either way.
 
 ---
@@ -268,9 +266,11 @@ If all seven check out, you're live.
 4. **Environment Variables** → add every var from your `.env.local`
    (`SHOPIFY_STORE`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` (or
    `SHOPIFY_ADMIN_TOKEN` if you're on the older admin-created app path),
-   `SHEET_ID`, `APPS_SCRIPT_URL`, `APPS_SCRIPT_SECRET`,
-   `DASHBOARD_PASSWORD`, `AUTH_SECRET`, plus any of the optional ones from
-   step 4 you've turned on).
+   `SHEET_ID`, `APPS_SCRIPT_URL`, `APPS_SCRIPT_SECRET`, `SUPABASE_URL`,
+   `SUPABASE_SECRET_KEY`, `DASHBOARD_PASSWORD`, `AUTH_SECRET`, plus any of
+   the optional ones from step 4 you've turned on). **Don't skip the
+   Supabase pair** — without it every serverless instance gets its own
+   throwaway in-memory store and orders vanish mid-flow.
 5. Deploy. Vercel gives you a `*.vercel.app` URL immediately.
 6. **Optional custom domain** (e.g. `orders.ritualmatcha.ph`): Vercel project
    → Settings → Domains → add the subdomain → add the CNAME record it shows
@@ -307,11 +307,11 @@ APPS_SCRIPT_URL=https://script.google.com/macros/s/.../exec
 APPS_SCRIPT_SECRET=...
 DASHBOARD_PASSWORD=...
 AUTH_SECRET=...
+# persistent store (orders survive restarts — tables via scripts/db/schema.sql):
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_SECRET_KEY=sb_secret_...
 # optional, later:
-ANTHROPIC_API_KEY=
+ANTHROPIC_API_KEY=      # turns on Claude parsing + proof-screenshot reading
+FOLLOW_UP_DAYS=         # follow-up queue window, default 3
 BPI_EMAIL_QUERY=
-SUPABASE_URL=
-SUPABASE_PUBLISHABLE_KEY=
-SUPABASE_SECRET_KEY=
-SUPABASE_JWKS_URL=
 ```

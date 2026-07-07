@@ -6,6 +6,7 @@ import type { CatalogProduct, Order } from "@/lib/types";
 import { formatPeso, formatPouchQty, formatSampleQty } from "@/lib/conversions";
 import { CopyButton } from "@/components/CopyButton";
 import { StatusPill } from "@/components/StatusPill";
+import { TestBadge } from "@/components/TestBadge";
 import { Modal } from "@/components/Modal";
 import { LineItemEditor } from "./LineItemEditor";
 import {
@@ -87,7 +88,10 @@ export function OrderCard({
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <StatusPill order={order} />
+          <div className="flex items-center gap-1.5">
+            {order.isTest && <TestBadge />}
+            <StatusPill order={order} />
+          </div>
           {order.shopifyDraftName &&
             (order.shopifyDraftUrl ? (
               <a
@@ -101,7 +105,11 @@ export function OrderCard({
               </a>
             ) : (
               <span
-                title="Mock draft — connect a Shopify Admin token for a real link"
+                title={
+                  order.isTest
+                    ? "Test mode — no real draft was created in Shopify"
+                    : "Mock draft — connect a Shopify Admin token for a real link"
+                }
                 className="cursor-help rounded bg-forest-100 px-1.5 py-0.5 text-[11px] text-forest-600"
               >
                 {order.shopifyDraftName}

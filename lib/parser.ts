@@ -149,9 +149,57 @@ function findProduct(segment: string, catalog: CatalogProduct[]): CatalogProduct
   return best;
 }
 
+/**
+ * Strip whole-conversation noise BEFORE segmentation, so Joey can paste an
+ * entire Viber thread instead of trimming it down to just the order lines:
+ *  - "[10/07/26, 9:15 PM]"-style export timestamps (split-unsafe: they
+ *    contain commas, so they must go before the comma split)
+ *  - lines quoting OUR OWN replies — a pasted "The total is ₱X for 2 cases
+ *    of Kasane!" must never re-add those 2 cases as a new line item
+ */
+function precleanConversation(message: string): string {
+  const OWN_REPLY_MARKERS = [
+    "the total is",
+    "bank of the philippine islands",
+    "account number",
+    "2561013163",
+    "we will process your order",
+    "lead time is",
+    "payment received",
+    "ready for pickup",
+    "tracking number",
+  ];
+  return message
+    .split("\n")
+    .map((line) => {
+      const noTimestamp = line.replace(/^\s*\[[^\]]{4,40}\]\s*/, "");
+      // Strip the "Sender Name:" prefix ONLY on lines that had a timestamp —
+      // a hand-typed order line like "kasane: 2" must never lose its product.
+      return noTimestamp === line
+        ? line
+        : noTimestamp.replace(/^[^:\n]{1,40}:\s*/, "");
+    })
+    .filter((line) => {
+      const l = line.toLowerCase();
+      return !OWN_REPLY_MARKERS.some((m) => l.includes(m));
+    })
+    .join("\n");
+}
+
+/** Segment-level conversation noise — skipped silently, never flagged. */
+function isConversationNoise(segment: string): boolean {
+  return (
+    /^\d{1,2}:\d{2}(:\d{2})?\s*(am|pm)?$/.test(segment) || // bare time
+    /^\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?$/.test(segment) || // bare date
+    /\b(\+?63|0)9\d{2}[- ]?\d{3}[- ]?\d{4}\b/.test(segment) || // contains a PH mobile number
+    /^https?:\/\//.test(segment) || // link
+    /^[\p{Emoji}\p{P}\s]+$/u.test(segment) // emoji/punctuation only
+  );
+}
+
 /** Split a message into candidate line segments. */
 function segmentMessage(message: string): string[] {
-  return message
+  return precleanConversation(message)
     .toLowerCase()
     .split(/\n|,|;|\+|&|\band\b/)
     .map((s) => s.trim())
@@ -164,7 +212,7 @@ function looksOrderLike(segment: string): boolean {
 }
 
 const NOISE_PATTERNS = [
-  /^(hi|hello|hey|good\s*(am|pm|morning|afternoon|evening)|thank(s| you).*|pa[- ]?order|order|pwede|paki|please|pls|po|opo|yes|sige|same day.*|asap.*)$/,
+  /^(hi|hello|hey|good\s*(am|pm|morning|afternoon|evening)|thank(s| you).*|pa[- ]?order|order|pwede|paki|please|pls|po|opo|yes|sige|same day.*|asap.*)(\s+(po|naman|ulit|please|pls|sana))*$/,
 ];
 
 export function parseMessage(
@@ -180,6 +228,7 @@ export function parseMessage(
   let pendingQty: QtyMatch | null = null;
 
   for (const segment of segments) {
+    if (isConversationNoise(segment)) continue;
     const product = findProduct(segment, catalog);
     const qty = extractQty(segment);
 

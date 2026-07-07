@@ -31,7 +31,7 @@ function formatKg(kg: number): string {
   return `${rounded}kg`;
 }
 
-function plural(n: number, word: string): string {
+export function plural(n: number, word: string): string {
   if (n === 1) return `${n} ${word}`;
   return `${n} ${word.endsWith("ch") ? `${word}es` : `${word}s`}`;
 }

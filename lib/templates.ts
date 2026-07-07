@@ -23,6 +23,16 @@ Your order for ${itemsText} (${formatPeso(total)}) is confirmed and now being pr
 Lead time is 3-5 days. We'll message you once it's ready for delivery or pickup!`;
 }
 
+/** Gentle nudge for drafts that have sat unpaid — the follow-up queue's copy button. */
+export function paymentReminderReply(total: number): string {
+  return `Hi! Just a gentle follow-up on your pending order (${formatPeso(total)}) 🙂
+Sending the payment details again for convenience:
+Bank of the Philippine Islands (BPI)
+Account: RMC Ritual Trading Corporation
+Account Number: 2561013163
+We'll process the order as soon as payment comes through — lead time is 3-5 days upon payment. Thank you! 🙂`;
+}
+
 export interface FulfilmentTemplate {
   key: string;
   label: string;

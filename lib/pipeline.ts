@@ -18,13 +18,13 @@ import type { Order, OrderItem } from "./types";
  */
 export async function tick(): Promise<void> {
   const now = Date.now();
-  for (const order of listOrders()) {
+  for (const order of await listOrders()) {
     if (order.status === "queued") {
       order.status = "processing";
       if (!order.processAfter) {
         order.processAfter = new Date(now + PROCESS_DELAY_MS).toISOString();
       }
-      saveOrder(order);
+      await saveOrder(order);
     }
     if (
       order.status === "processing" &&
@@ -40,11 +40,41 @@ export async function processOrder(order: Order): Promise<Order> {
   const catalog = await getCatalog();
   const { items, reasons } = parseMessage(order.rawMessage, catalog);
   order.items = items;
+  reasons.push(...(await duplicateReasons(order)));
   await repriceOrder(order, reasons);
   order.status = "processed";
   order.processedAt = new Date().toISOString();
-  saveOrder(order);
+  await saveOrder(order);
   return order;
+}
+
+/** Double-sent Viber messages happen — flag likely duplicates, never block. */
+const DUPLICATE_WINDOW_MS = 6 * 60 * 60 * 1000; // same cafe, open order within 6h
+const IDENTICAL_WINDOW_MS = 48 * 60 * 60 * 1000; // same cafe + same exact message
+
+async function duplicateReasons(order: Order): Promise<string[]> {
+  const company = order.company.trim().toLowerCase();
+  const message = order.rawMessage.trim();
+  const createdAt = Date.parse(order.createdAt);
+
+  for (const other of await listOrders()) {
+    if (other.id === order.id) continue;
+    if (other.company.trim().toLowerCase() !== company) continue;
+    if (other.status === "paid") continue;
+    const gap = Math.abs(createdAt - Date.parse(other.createdAt));
+
+    if (other.rawMessage.trim() === message && gap < IDENTICAL_WINDOW_MS) {
+      return [
+        `Possible duplicate: the exact same message from ${order.company} is already on the board — check before drafting.`,
+      ];
+    }
+    if (gap < DUPLICATE_WINDOW_MS) {
+      return [
+        `Possible duplicate: ${order.company} already has an open order from the last few hours — check before drafting.`,
+      ];
+    }
+  }
+  return [];
 }
 
 /**
@@ -64,7 +94,7 @@ export async function repriceOrder(
   const reasons = [...(parserReasons ?? []), ...pricingReviewReasons(priced)];
   order.reviewReasons = reasons;
   order.needsReview = reasons.length > 0;
-  saveOrder(order);
+  await saveOrder(order);
   return order;
 }
 

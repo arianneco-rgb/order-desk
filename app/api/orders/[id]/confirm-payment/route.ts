@@ -17,15 +17,17 @@ export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  // Synchronous claim BEFORE any await — a double-submit can't mark paid twice.
-  if (!tryLockOrder(params.id)) {
+  // Claim BEFORE any other await — a double-submit can't mark paid twice.
+  // In Supabase mode this is an atomic UPDATE ... WHERE locked_at IS NULL,
+  // so the guarantee holds even across multiple serverless instances.
+  if (!(await tryLockOrder(params.id))) {
     return NextResponse.json(
       { error: "Already confirming this payment — try again in a moment." },
       { status: 409 }
     );
   }
   try {
-    const order = getOrder(params.id);
+    const order = await getOrder(params.id);
     if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
     if (order.status !== "draft_created") {
       return NextResponse.json(
@@ -57,10 +59,11 @@ export async function POST(
     order.paidAt = new Date().toISOString();
     order.payment.confirmed = true;
     order.paidReply = paidConfirmationReply(items || "your order", order.total);
-    saveOrder(order);
+    await saveOrder(order);
 
     // The order IS paid at this point (Shopify already completed the draft) —
-    // a Sheets hiccup must not fail the request, only surface a warning.
+    // a history hiccup must not fail the request, only surface a warning.
+    // The Google Sheet row is mirrored in the background (never awaited).
     let sheetWarning: string | undefined;
     try {
       await appendOrderHistory({
@@ -71,11 +74,12 @@ export async function POST(
         orderId: order.id,
         shopifyDraftName: order.shopifyDraftName,
         status: "paid",
+        isTest: order.isTest,
       });
     } catch (err) {
       console.error("Order History append failed:", err);
       sheetWarning =
-        "Order marked paid, but the row could not be written to the Order History sheet — add it manually.";
+        "Order marked paid, but recording it to History failed — add the row manually.";
     }
 
     return NextResponse.json({ order, sheetWarning });
@@ -85,6 +89,6 @@ export async function POST(
       { status: 502 }
     );
   } finally {
-    unlockOrder(params.id);
+    await unlockOrder(params.id);
   }
 }

@@ -36,7 +36,7 @@ function refFor(order: Order): string {
 }
 
 /** The simulated dedicated BPI mailbox, derived from current app state. */
-export function simulatedInbox(): BpiEmail[] {
+export async function simulatedInbox(): Promise<BpiEmail[]> {
   const now = Date.now();
   const emails: BpiEmail[] = [
     // Decoys — transfers that belong to no open draft.
@@ -56,7 +56,7 @@ export function simulatedInbox(): BpiEmail[] {
     },
   ];
 
-  for (const order of listOrders()) {
+  for (const order of await listOrders()) {
     if (order.status !== "draft_created" || !order.draftCreatedAt) continue;
     const arrivedAt = Date.parse(order.draftCreatedAt) + SIMULATED_ARRIVAL_MS;
     if (now < arrivedAt) continue; // transfer "hasn't landed" yet
@@ -127,9 +127,12 @@ async function fetchLiveInbox(): Promise<BpiEmail[]> {
 }
 
 export async function matchOrder(order: Order): Promise<BpiMatch | null> {
-  if (bpiMode() === "live") {
+  // Test-mode orders never search the real mailbox — a coincidental match
+  // against an actual transfer would be genuinely confusing (fake order,
+  // real money). They only ever match the simulated inbox.
+  if (bpiMode() === "live" && !order.isTest) {
     const inbox = await fetchLiveInbox();
     return findMatch(order, inbox);
   }
-  return findMatch(order, simulatedInbox());
+  return findMatch(order, await simulatedInbox());
 }

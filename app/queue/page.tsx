@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { Order } from "@/lib/types";
 import { StatusPill } from "@/components/StatusPill";
+import { TestBadge } from "@/components/TestBadge";
 import { SkeletonCard } from "@/components/Skeleton";
 
 const POLL_MS = 1500;
@@ -72,7 +73,10 @@ function QueueCard({ order }: { order: Order }) {
         <p className="line-clamp-4 min-w-0 flex-1 whitespace-pre-wrap break-words text-sm text-forest-900">
           {order.rawMessage || "(empty message)"}
         </p>
-        <StatusPill order={order} className="shrink-0" />
+        <div className="flex shrink-0 items-center gap-1.5">
+          {order.isTest && <TestBadge />}
+          <StatusPill order={order} />
+        </div>
       </div>
       <div className="relative mt-3 flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-forest-700">{formatTime(order.createdAt)}</span>
@@ -269,6 +273,7 @@ export default function QueuePage() {
                     <span className="min-w-0 flex-1 truncate text-sm text-forest-700">
                       {firstLine(order.rawMessage)}
                     </span>
+                    {order.isTest && <TestBadge className="shrink-0" />}
                     <StatusPill order={order} className="shrink-0" />
                     <Link
                       href="/processed"

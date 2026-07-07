@@ -12,7 +12,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   await tick();
-  const order = getOrder(params.id);
+  const order = await getOrder(params.id);
   if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
   return NextResponse.json({ order });
 }
@@ -27,7 +27,7 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const order = getOrder(params.id);
+  const order = await getOrder(params.id);
   if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
   if (order.status !== "processed" && order.status !== "draft_created") {
     return NextResponse.json(
@@ -67,7 +67,7 @@ export async function PATCH(
       `Lines changed after draft ${staleDraftName} was created — that draft is stale. Create a new one (and delete the old draft in Shopify).`
     );
     updated.needsReview = true;
-    saveOrder(updated);
+    await saveOrder(updated);
   }
   return NextResponse.json({ order: updated });
 }

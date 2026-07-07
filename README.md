@@ -30,12 +30,28 @@ Every integration checks its own env var; missing var = mock. Mix freely.
 | Google Sheets | `APPS_SCRIPT_URL` + `APPS_SCRIPT_SECRET` + `SHEET_ID` | In-memory mirror |
 | Claude parsing | `ANTHROPIC_API_KEY` *(later phase)* | Keyword/regex fallback parser |
 | BPI email | Same `APPS_SCRIPT_URL`/`APPS_SCRIPT_SECRET` *(reads the deploying Google account's own Gmail)* | Simulated inbox (a matching transfer "arrives" ~8s after a draft is created) |
-| Database | `SUPABASE_*` *(credentials only — persistence code not built yet)* | In-memory (resets on restart) |
+| Database | `SUPABASE_URL` + `SUPABASE_SECRET_KEY` *(tables via [scripts/db/schema.sql](scripts/db/schema.sql))* | In-memory (resets on restart) |
 | Auth | `DASHBOARD_PASSWORD` (+ `AUTH_SECRET`) | Auth disabled (local dev only) |
 
 See [.env.example](.env.example) for the full list, or [SETUP.md](SETUP.md)
 for the full step-by-step to go live against the real Shopify store, the
 real Google Sheet, and hosting on Vercel.
+
+## Test mode
+
+A global switch in the nav (**Test mode ON/off**) — flip it on and every
+order created from then on gets a `TEST` badge everywhere it appears, and:
+- **Skips the real Shopify draft + mark-paid calls** (still reads real
+  catalog prices and the real cafe list, so it prices realistically).
+- **Never writes to the Google Sheet.**
+- **Never searches the real BPI mailbox** — always matches the simulated
+  inbox, so a test order can't coincidentally match someone's real transfer.
+
+It's a shared, database-backed switch (`app_settings` table) — everyone
+using the dashboard sees the same state, and a bright banner shows on every
+page while it's on so it's hard to forget. Turning it OFF is instant;
+turning it ON asks for confirmation first, since any real order pasted
+while it's on would also be faked.
 
 ## Domain rules (enforced in `lib/`)
 
@@ -109,6 +125,8 @@ npm run typecheck
 npm run build
 ```
 
-Deploy: see [SETUP.md](SETUP.md) step 7 for hosting on Vercel. Note the
-in-memory store resets per serverless instance — wire up Supabase (later
-phase) before the team relies on it in production.
+Deploy: see [SETUP.md](SETUP.md) step 8 for hosting on Vercel. Orders
+persist in Supabase when `SUPABASE_URL` + `SUPABASE_SECRET_KEY` are set
+(tables: [scripts/db/schema.sql](scripts/db/schema.sql)); without them the
+store is in-memory and resets per serverless instance — fine for local
+demos, not for production.

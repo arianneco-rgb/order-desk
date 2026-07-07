@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Order, ProofOfPayment } from "@/lib/types";
 import { formatPeso } from "@/lib/conversions";
 import { CopyButton } from "@/components/CopyButton";
+import { TestBadge } from "@/components/TestBadge";
 import { Modal } from "@/components/Modal";
 import { FULFILMENT_TEMPLATES } from "@/lib/templates";
 import { formatTime } from "./format";
@@ -186,7 +187,10 @@ export function PaymentPane({
 
       {order && order.status === "draft_created" && (
         <div className="mt-4 space-y-4">
-          <p className="text-sm font-medium text-forest-900">{order.company}</p>
+          <p className="flex items-center gap-1.5 text-sm font-medium text-forest-900">
+            {order.company}
+            {order.isTest && <TestBadge />}
+          </p>
 
           {/* Proof from Viber */}
           <div>
@@ -243,6 +247,55 @@ export function PaymentPane({
                 ))}
               </div>
             )}
+            {/* What Claude read off each screenshot (only when the reader ran). */}
+            {proofs.some((p) => p.analysis) && (
+              <div className="mt-2 space-y-1.5">
+                {proofs.map((proof, i) => {
+                  const a = proof.analysis;
+                  if (!a) return null;
+                  if (a.unreadable) {
+                    return (
+                      <p key={i} className="text-xs text-forest-500">
+                        {proof.name}: couldn&apos;t read this image — check it by eye.
+                      </p>
+                    );
+                  }
+                  const amountMatches =
+                    a.amount !== undefined &&
+                    order !== null &&
+                    Math.abs(a.amount - order.total) < 0.01;
+                  return (
+                    <div
+                      key={i}
+                      className={
+                        a.amount === undefined
+                          ? "rounded-md bg-forest-50 px-2.5 py-1.5 text-xs text-forest-700"
+                          : amountMatches
+                            ? "rounded-md border border-forest-300 bg-forest-50 px-2.5 py-1.5 text-xs text-forest-800"
+                            : "rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900"
+                      }
+                    >
+                      <span className="font-semibold">
+                        {a.amount !== undefined
+                          ? `Screenshot reads ${formatPeso(a.amount)}`
+                          : "Screenshot read (no amount legible)"}
+                      </span>
+                      {a.amount !== undefined &&
+                        (amountMatches
+                          ? " — matches the order total ✓"
+                          : ` — order total is ${formatPeso(order?.total ?? 0)} ⚠️`)}
+                      {(a.senderName || a.ref || a.date) && (
+                        <span className="text-forest-600">
+                          {a.senderName ? ` · ${a.senderName}` : ""}
+                          {a.ref ? ` · ref ${a.ref}` : ""}
+                          {a.date ? ` · ${a.date}` : ""}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* BPI email verification */}
@@ -271,7 +324,7 @@ export function PaymentPane({
                 <p className="mt-0.5 text-xs text-forest-600">
                   Ref {match.ref} · {formatTime(match.date) || match.date}
                   {order.shopifyDraftName
-                    ? ` · matched to Draft ${order.shopifyDraftName.replace(" (mock)", "")}`
+                    ? ` · matched to Draft ${order.shopifyDraftName.replace(/ \((mock|test)\)$/, "")}`
                     : ""}
                 </p>
               </div>
@@ -326,8 +379,9 @@ export function PaymentPane({
       {order && isPaid && (
         <div className="mt-4 space-y-4">
           <div className="rounded-lg border border-forest-300 bg-forest-50 p-3">
-            <p className="text-sm font-semibold text-forest-800">
+            <p className="flex items-center gap-1.5 text-sm font-semibold text-forest-800">
               Paid ✓ {formatTime(order.paidAt)}
+              {order.isTest && <TestBadge />}
             </p>
             <p className="mt-0.5 text-xs text-forest-600">
               {order.company} · {formatPeso(order.total)}

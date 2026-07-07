@@ -14,16 +14,18 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const order = getOrder(params.id);
+  const order = await getOrder(params.id);
   if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
 
   const match = await matchOrder(order);
   order.payment.bpiMatch = match ?? undefined;
   order.payment.noMatch = !match;
-  saveOrder(order);
+  await saveOrder(order);
   return NextResponse.json({
     order,
     match,
-    simulated: bpiMode() === "simulated",
+    // Test orders always match the simulated inbox (see lib/bpi.ts),
+    // regardless of the global BPI mode.
+    simulated: order.isTest || bpiMode() === "simulated",
   });
 }

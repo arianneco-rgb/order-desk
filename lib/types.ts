@@ -44,10 +44,23 @@ export interface BpiMatch {
   emailId: string;
 }
 
+/** What Claude vision read off a proof screenshot (best-effort, key-gated). */
+export interface ProofAnalysis {
+  /** Transfer amount in PHP, if legible. */
+  amount?: number;
+  ref?: string;
+  senderName?: string;
+  date?: string;
+  /** The image didn't look like a payment slip / nothing legible. */
+  unreadable?: boolean;
+}
+
 export interface ProofOfPayment {
   url: string;
   name: string;
   uploadedAt: string;
+  /** Present only when ANTHROPIC_API_KEY is set — see lib/proof-reader.ts. */
+  analysis?: ProofAnalysis;
 }
 
 export interface PaymentInfo {
@@ -87,6 +100,14 @@ export interface Order {
   processAfter?: string;
   processedAt?: string;
   paidAt?: string;
+  /**
+   * Stamped at creation from the global test-mode switch (Nav toggle). Fakes
+   * the Shopify draft/mark-paid calls (see lib/shopify.ts) and skips the
+   * Sheet mirror write (see lib/sheets.ts) — everything else about the order
+   * behaves normally so the flow can be tested end-to-end. Never flips after
+   * creation, so an order's real/test status can't change mid-flow.
+   */
+  isTest?: boolean;
 }
 
 export interface CafeCustomer {
@@ -138,4 +159,6 @@ export interface OrderHistoryRow {
   status: "paid";
   /** Free-text note Joey can add/edit after the fact (e.g. a correction). */
   notes?: string;
+  /** Carried over from Order.isTest — skips the Sheet mirror write. */
+  isTest?: boolean;
 }

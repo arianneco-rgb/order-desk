@@ -7,6 +7,7 @@ import { OrdersTable } from "@/components/processed/OrdersTable";
 import { OrdersKanban } from "@/components/processed/OrdersKanban";
 import { OrderCard } from "@/components/processed/OrderCard";
 import { PaymentPane } from "@/components/processed/PaymentPane";
+import { FollowUpQueue } from "@/components/processed/FollowUpQueue";
 import { buildTitleMap } from "@/components/processed/format";
 import { SkeletonCard } from "@/components/Skeleton";
 import { Kbd } from "@/components/Kbd";
@@ -43,6 +44,7 @@ export default function ProcessedPage() {
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [followUpDays, setFollowUpDays] = useState(3);
 
   const selectedRef = useRef<Order | null>(null);
   const lastMutationRef = useRef(0);
@@ -83,6 +85,16 @@ export default function ProcessedPage() {
     fetch("/api/catalog")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d && setCatalog(d.catalog ?? []))
+      .catch(() => {});
+  }, []);
+
+  // Follow-up window (FOLLOW_UP_DAYS env, default 3).
+  useEffect(() => {
+    fetch("/api/meta")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (typeof d?.followUpDays === "number") setFollowUpDays(d.followUpDays);
+      })
       .catch(() => {});
   }, []);
 
@@ -207,6 +219,13 @@ export default function ProcessedPage() {
           {loadError}
         </div>
       )}
+
+      <FollowUpQueue
+        orders={sortedOrders}
+        followUpDays={followUpDays}
+        selectedId={selectedOrder?.id ?? null}
+        onSelect={handleSelect}
+      />
 
       {/* Split screen: Processed orders card · Payment verification card */}
       <div className="mt-4 grid grid-cols-1 items-start gap-6 lg:grid-cols-5">

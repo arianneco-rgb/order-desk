@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 /** List all orders. Every read also advances queued/processing orders. */
 export async function GET() {
   await tick();
-  return NextResponse.json({ orders: listOrders() });
+  return NextResponse.json({ orders: await listOrders() });
 }
 
 /** Intake: cafe + pasted message → a queued order. */
@@ -25,9 +25,10 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
-  if (company.length > 120 || rawMessage.length > 4000) {
+  // Generous cap — whole conversations are fine, the parser skips the noise.
+  if (company.length > 120 || rawMessage.length > 12_000) {
     return NextResponse.json(
-      { error: "Message too long — paste one order at a time (max 4000 characters)." },
+      { error: "Message too long — paste one cafe's conversation at a time (max 12,000 characters)." },
       { status: 400 }
     );
   }
@@ -37,7 +38,7 @@ export async function POST(request: NextRequest) {
     body.customerId?.startsWith("mock:")
       ? body.customerId
       : undefined;
-  const order = createOrder({
+  const order = await createOrder({
     company,
     customerId,
     rawMessage,

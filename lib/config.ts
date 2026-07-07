@@ -36,7 +36,9 @@ export function bpiMode(): BpiMode {
 }
 
 export function dbMode(): DbMode {
-  return process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+  // SUPABASE_SECRET_KEY is Supabase's newer sb_secret_... key format — full
+  // server-side access, the direct successor to the old service_role JWT.
+  return process.env.SUPABASE_URL && process.env.SUPABASE_SECRET_KEY
     ? "supabase"
     : "memory";
 }
@@ -47,6 +49,12 @@ export function authEnabled(): boolean {
 
 /** Payments above this prompt Joey to double-check before confirming. */
 export const LARGE_PAYMENT_THRESHOLD = 100_000;
+
+/** Drafts unpaid for this many days surface in the follow-up queue. */
+export function followUpDays(): number {
+  const n = Number(process.env.FOLLOW_UP_DAYS);
+  return Number.isFinite(n) && n > 0 ? n : 3;
+}
 
 export function modeSummary() {
   return {

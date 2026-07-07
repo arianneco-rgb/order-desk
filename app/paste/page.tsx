@@ -141,7 +141,16 @@ export default function PastePage() {
           and appear here automatically.
         </p>
 
-        {cafe && <CafeOrderHistory cafe={cafe} messageEmpty={!message.trim()} />}
+        {cafe && (
+          <CafeOrderHistory
+            cafe={cafe}
+            messageEmpty={!message.trim()}
+            onUse={(itemsText) => {
+              setMessage(itemsText);
+              document.getElementById("raw-message")?.focus();
+            }}
+          />
+        )}
 
         <label
           htmlFor="raw-message"
@@ -154,7 +163,7 @@ export default function PastePage() {
           rows={7}
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          placeholder="Paste the Viber order message here…"
+          placeholder="Paste the Viber order message here — a whole conversation works too, the parser skips the chatter…"
           className="mt-1.5 min-h-[9rem] w-full rounded-md border border-forest-300 px-3 py-2 text-sm text-forest-900 placeholder:text-forest-400 focus:border-forest-600 focus:outline-none"
         />
 
