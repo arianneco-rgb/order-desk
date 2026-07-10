@@ -5,6 +5,7 @@
 // in by hand before sending, same as the source doc.
 
 import { formatPeso } from "./conversions";
+import type { DeliveryMethod } from "./types";
 
 /** The reply for a new order. {TOTAL} and {ITEMS} are filled in. */
 export function totalOrderReply(total: number, itemsText: string): string {
@@ -74,6 +75,31 @@ Thank you! 🙂`,
     text: `Just a gentle reminder that our usual lead time is 3–5 days 🙂 If our schedule and production allow, we'll definitely send it out sooner!`,
   },
 ];
+
+/** DeliveryMethod (lib/delivery.ts) → the matching fulfilment template key. */
+const METHOD_TEMPLATE: Record<DeliveryMethod, string> = {
+  pickup: "pickup",
+  mm_delivery: "mm_delivery",
+  jnt_nationwide: "nationwide",
+};
+
+/**
+ * The fulfilment reply matching the order's delivery method — shown alone
+ * (auto-selected) on the paid screen; the rest collapse under "other
+ * replies". When the delivery fee is known, the nationwide template's
+ * "XX" blank is filled with the real amount.
+ */
+export function fulfilmentReplyFor(
+  method: DeliveryMethod,
+  deliveryFee?: number
+): FulfilmentTemplate | undefined {
+  const template = FULFILMENT_TEMPLATES.find((t) => t.key === METHOD_TEMPLATE[method]);
+  if (!template) return undefined;
+  if (method === "jnt_nationwide" && deliveryFee && deliveryFee > 0) {
+    return { ...template, text: template.text.replace(/\bXX\b/, formatPeso(deliveryFee)) };
+  }
+  return template;
+}
 
 /** Reference only (not part of the Total Order flow, which is BPI-only per spec). */
 export const PAYMENT_METHODS_NOTE = `Payment Methods:

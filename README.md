@@ -12,13 +12,13 @@ BPI payment; keep one clean record of everything.
 
 | Route | What it does |
 |---|---|
-| `/paste` | Cafe dropdown (from the Customers sheet/Shopify) + message box → **Send to queue**. Can add a new cafe (creates it in Shopify). Shows the selected cafe's recent paid orders (with a "repeat order" hint) and supports **⌘/Ctrl+Enter** to send. |
+| `/paste` | Cafe dropdown (searches cafe AND contact names) + message box → **Send to queue**. **Chat-to-profile**: the add-cafe modal parses a pasted customer message (template or free-form) into name/phone/cafe/address, creates the Shopify profile with the address, and moves any order lines into the message box. Shows the selected cafe's real Shopify order history ("Use as new order" fills the box) and supports **⌘/Ctrl+Enter** to send. |
 | `/queue` | Messages being parsed, grouped by cafe, "Processing…" status, searchable. Auto-moves to Processed. |
-| `/processed` | Split screen, searchable, **↑/↓** to move between orders. Left: orders (Table/Kanban toggle, persisted), line items, live-updating reply + total, a **preview modal** (exact Shopify variants + total) before **Confirm · create draft**. Right: payment verification for the selected order — multi-file proof upload with a thumbnail gallery/lightbox, BPI email match (or no-match error), **Confirm payment · mark paid**. |
+| `/processed` | Split screen, searchable, **↑/↓** to move between orders. Left: orders (Table/Kanban toggle, persisted), line items, **draft options** (apply the cafe's eligible Shopify discounts, manual discount / one-click **sample credit**, **VAT 12% tickbox**, **delivery method + optional fee**, free samples — defaults from the Shopify profile, all overridable), live-updating reply + Shopify-calculated total breakdown, a **preview modal** before **Confirm · create draft**. Right: payment verification — multi-file proof upload with gallery/lightbox, BPI email match, **Confirm payment · mark paid**. |
 | `/history` | Every paid order, read from the **Order History** sheet tab. Add/edit a free-text note per order; **View invoice** opens a printable receipt. |
 | `/invoice/:orderId` | Printable receipt for one paid order (print → Save as PDF; no PDF library — just the browser's own print dialog). |
 | `/analytics` | Always-on dashboard: total revenue, paid order count, average order value, top cafes, best-selling variants, and a 30-day revenue chart — all derived from Order History. |
-| `/reports` | Pick a date range (+ optional cafe filter) → summary, order table, per-cafe breakdown, printable the same way as the invoice page. |
+| `/reports` | Full sales report over **all Shopify orders** (not just app-processed): date range + wholesale/retail segment + cafe filter, headline stats with previous-period deltas (revenue, orders, AOV, kg sold, active cafes, samples, discounts), revenue-over-time chart, top products/cafes bars, product & cafe breakdowns, new-cafes list, delivery split, order table — printable to PDF (charts are pure SVG/divs, no chart library). |
 
 ## Modes — live vs mock
 

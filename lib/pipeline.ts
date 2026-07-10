@@ -3,9 +3,16 @@
 // The dashboard never advances past `processed` on its own — creating the
 // draft and confirming payment are Joey's clicks.
 
-import { getCatalog } from "./shopify";
+import {
+  buildDraftLineItems,
+  calculateDraft,
+  getCatalog,
+  getCustomerDefaults,
+} from "./shopify";
+import { shopifyMode } from "./config";
+import { defaultDeliveryMethod } from "./delivery";
 import { parseMessage } from "./parser";
-import { priceItems, orderTotal, itemsText, pricingReviewReasons } from "./pricing";
+import { priceItems, itemsText, localDraftTotals, pricingReviewReasons } from "./pricing";
 import { totalOrderReply } from "./templates";
 import { listOrders, saveOrder, PROCESS_DELAY_MS } from "./store";
 import type { Order, OrderItem } from "./types";
@@ -41,11 +48,32 @@ export async function processOrder(order: Order): Promise<Order> {
   const { items, reasons } = parseMessage(order.rawMessage, catalog);
   order.items = items;
   reasons.push(...(await duplicateReasons(order)));
+  await applyCustomerDefaults(order);
   await repriceOrder(order, reasons);
   order.status = "processed";
   order.processedAt = new Date().toISOString();
   await saveOrder(order);
   return order;
+}
+
+/**
+ * Seed the draft options from the Shopify profile (runs ONCE, at
+ * processing): address → delivery method, tax setting / "Invoice Requested"
+ * tag → VAT box. Joey can override everything on the order card.
+ */
+async function applyCustomerDefaults(order: Order): Promise<void> {
+  if (!order.customerId) return;
+  try {
+    const defaults = await getCustomerDefaults(order.customerId);
+    if (!defaults) return;
+    if (!order.options.deliveryMethod) {
+      order.options.deliveryMethod = defaultDeliveryMethod(defaults.city, defaults.province);
+    }
+    const invoiceTag = defaults.tags.some((t) => t.toLowerCase().includes("invoice"));
+    if (invoiceTag || !defaults.taxExempt) order.options.chargeVat = true;
+  } catch (err) {
+    console.error("Customer defaults lookup failed (using plain defaults):", err);
+  }
 }
 
 /** Double-sent Viber messages happen — flag likely duplicates, never block. */
@@ -78,9 +106,14 @@ async function duplicateReasons(order: Order): Promise<string[]> {
 }
 
 /**
- * Recompute total, reply, and review flags from the current line items.
- * Used after parsing AND after Joey edits quantities (reply updates live).
- * `parserReasons` are carried through; pass [] when repricing an edit.
+ * Recompute total, reply, and review flags from the current line items AND
+ * draft options (discounts/VAT/delivery). Used after parsing, after Joey
+ * edits quantities, and after Joey changes options — the reply updates live.
+ *
+ * LIVE mode asks Shopify itself (draftOrderCalculate — includes the
+ * customer's automatic discounts), so the total Joey sends the cafe is
+ * exactly what the draft will say. Mock mode / a Shopify hiccup falls back
+ * to local math, which can't see automatic discounts.
  */
 export async function repriceOrder(
   order: Order,
@@ -88,7 +121,17 @@ export async function repriceOrder(
 ): Promise<Order> {
   const catalog = await getCatalog();
   const priced = priceItems(order.items, catalog);
-  order.total = orderTotal(priced);
+
+  let totals = localDraftTotals(priced, order.options);
+  if (shopifyMode() === "live" && order.items.length > 0) {
+    try {
+      totals = await calculateDraft(order, buildDraftLineItems(priced, catalog));
+    } catch (err) {
+      console.error("draftOrderCalculate failed — using local totals:", err);
+    }
+  }
+  order.totals = totals;
+  order.total = totals.total;
   order.reply = totalOrderReply(order.total, itemsText(priced) || "your order");
 
   const reasons = [...(parserReasons ?? []), ...pricingReviewReasons(priced)];

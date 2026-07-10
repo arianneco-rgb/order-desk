@@ -6,7 +6,7 @@ import { formatPeso } from "@/lib/conversions";
 import { CopyButton } from "@/components/CopyButton";
 import { TestBadge } from "@/components/TestBadge";
 import { Modal } from "@/components/Modal";
-import { FULFILMENT_TEMPLATES } from "@/lib/templates";
+import { FULFILMENT_TEMPLATES, fulfilmentReplyFor } from "@/lib/templates";
 import { formatTime } from "./format";
 
 const LARGE_PAYMENT_THRESHOLD = 100000;
@@ -401,29 +401,66 @@ export function PaymentPane({
             </div>
           )}
 
-          <details className="rounded-lg border border-forest-200">
-            <summary className="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-forest-800 hover:bg-forest-50">
-              Fulfilment replies
-            </summary>
-            <div className="space-y-3 border-t border-forest-100 p-3">
-              {FULFILMENT_TEMPLATES.map((tpl) => (
-                <div
-                  key={tpl.key}
-                  className="rounded-lg border border-forest-100 bg-forest-50 p-3"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-forest-600">
-                      {tpl.label}
+          {/* Fulfilment reply, auto-matched to the order's delivery method —
+              only the relevant one is shown; the rest stay collapsed. */}
+          {(() => {
+            const method = order.options.deliveryMethod;
+            const active = method
+              ? fulfilmentReplyFor(method, order.options.deliveryFee)
+              : undefined;
+            const others = FULFILMENT_TEMPLATES.filter((t) => t.key !== active?.key);
+            return (
+              <>
+                {active && (
+                  <div className="rounded-lg border border-forest-300 bg-forest-50 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-forest-600">
+                        Fulfilment · {active.label}{" "}
+                        <span className="normal-case font-normal">
+                          (matched to the delivery method)
+                        </span>
+                      </p>
+                      <CopyButton text={active.text} label="Copy" />
+                    </div>
+                    <p className="mt-2 whitespace-pre-wrap text-sm text-forest-900">
+                      {active.text}
                     </p>
-                    <CopyButton text={tpl.text} />
+                    {method === "jnt_nationwide" &&
+                      (order.options.deliveryFee ?? 0) > 0 && (
+                        <p className="mt-2 border-t border-forest-200 pt-2 text-xs text-amber-800">
+                          ⚠️ The {formatPeso(order.options.deliveryFee ?? 0)} fee
+                          was already on the paid draft — drop the &ldquo;kindly
+                          send&rdquo; part before sending.
+                        </p>
+                      )}
                   </div>
-                  <p className="mt-2 whitespace-pre-wrap text-sm text-forest-900">
-                    {tpl.text}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </details>
+                )}
+                <details className="rounded-lg border border-forest-200">
+                  <summary className="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-forest-800 hover:bg-forest-50">
+                    {active ? "Other fulfilment replies" : "Fulfilment replies"}
+                  </summary>
+                  <div className="space-y-3 border-t border-forest-100 p-3">
+                    {others.map((tpl) => (
+                      <div
+                        key={tpl.key}
+                        className="rounded-lg border border-forest-100 bg-forest-50 p-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-forest-600">
+                            {tpl.label}
+                          </p>
+                          <CopyButton text={tpl.text} />
+                        </div>
+                        <p className="mt-2 whitespace-pre-wrap text-sm text-forest-900">
+                          {tpl.text}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              </>
+            );
+          })()}
 
           <div>
             <a

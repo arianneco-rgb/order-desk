@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCatalog, buildDraftLineItems, createDraftOrder } from "@/lib/shopify";
-import { priceItems } from "@/lib/pricing";
-import { getOrder, saveOrder, tryLockOrder, unlockOrder } from "@/lib/store";
+import { localDraftTotals, priceItems } from "@/lib/pricing";
+import { getOrder, recordSampleCredit, saveOrder, tryLockOrder, unlockOrder } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +38,10 @@ export async function POST(
     const catalog = await getCatalog();
     const priced = priceItems(order.items, catalog);
     const lineItems = buildDraftLineItems(priced, catalog);
-    const draft = await createDraftOrder(order, lineItems);
+    // VAT line amount: order.totals is refreshed by every reprice (items or
+    // options change), so it's current; local math is the safety net.
+    const vat = order.totals?.vat ?? localDraftTotals(priced, order.options).vat;
+    const draft = await createDraftOrder(order, lineItems, vat);
 
     order.shopifyDraftId = draft.draftId;
     order.shopifyDraftName = draft.draftName;
@@ -46,6 +49,31 @@ export async function POST(
     order.draftCreatedAt = new Date().toISOString();
     order.status = "draft_created";
     await saveOrder(order);
+
+    // The draft now carries this credit — record it so the auto-suggest
+    // never offers the same pesos twice. Sample credits are identified by
+    // the discount title the suggest button sets. Test orders are excluded:
+    // their fake drafts must not consume the cafe's real credit.
+    const md = order.options.manualDiscount;
+    if (
+      !order.isTest &&
+      order.customerId &&
+      md &&
+      md.valueType === "FIXED_AMOUNT" &&
+      md.value > 0 &&
+      md.title.toLowerCase().startsWith("sample credit")
+    ) {
+      try {
+        await recordSampleCredit({
+          orderId: order.id,
+          customerId: order.customerId,
+          amount: md.value,
+        });
+      } catch (err) {
+        console.error("Sample credit record failed (suggest may re-offer):", err);
+      }
+    }
+
     return NextResponse.json({ order });
   } catch (err) {
     return NextResponse.json(

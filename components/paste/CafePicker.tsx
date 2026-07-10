@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import type { CafeCustomer } from "@/lib/types";
+import { parseProfileMessage } from "@/lib/profile-parser";
 
 const inputClass =
   "w-full rounded-md border border-forest-300 px-3 py-2 text-sm focus:border-forest-600 focus:outline-none";
@@ -10,13 +11,18 @@ const inputClass =
 /**
  * Searchable combobox over /api/customers (150+ cafes) with an inline
  * "Add new cafe" modal that POSTs to /api/customers and selects the result.
+ * The modal's paste box turns a customer's chat message (template or
+ * free-form) into prefilled fields — chat-to-profile, always user-confirmed.
  */
 export function CafePicker({
   selected,
   onSelect,
+  onLeftoverOrderText,
 }: {
   selected: CafeCustomer | null;
   onSelect: (cafe: CafeCustomer | null) => void;
+  /** Lines of the pasted profile message that look like an order (fed into the message box). */
+  onLeftoverOrderText?: (text: string) => void;
 }) {
   const [customers, setCustomers] = useState<CafeCustomer[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -28,12 +34,21 @@ export function CafePicker({
 
   // "Add new cafe" modal state.
   const [modalOpen, setModalOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
   const [cafeName, setCafeName] = useState("");
   const [contactName, setContactName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [address1, setAddress1] = useState("");
+  const [city, setCity] = useState("");
+  const [province, setProvince] = useState("");
+  const [zip, setZip] = useState("");
+  const [leftover, setLeftover] = useState("");
   const [modalBusy, setModalBusy] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
+  // Fields the user edited by hand — re-parsing the paste box must never
+  // clobber a manual correction.
+  const touchedRef = useRef<Set<string>>(new Set());
 
   const loadCustomers = useCallback(async () => {
     try {
@@ -66,10 +81,16 @@ export function CafePicker({
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, []);
 
+  // Match the cafe name OR the contact person — "Marco" should find Marco's
+  // profile even when no company name is set on it.
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return customers;
-    return customers.filter((c) => c.name.toLowerCase().includes(q));
+    return customers.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        (c.contactName ?? "").toLowerCase().includes(q)
+    );
   }, [customers, query]);
 
   useEffect(() => {
@@ -83,13 +104,46 @@ export function CafePicker({
   }
 
   function openModal() {
+    setPasteText("");
     setCafeName(query.trim());
     setContactName("");
     setEmail("");
     setPhone("");
+    setAddress1("");
+    setCity("");
+    setProvince("");
+    setZip("");
+    setLeftover("");
     setModalError(null);
+    // The search-box prefill is a convenience, not a hand-edit — an explicit
+    // "Cafe:" label in the pasted message should still win over it.
+    touchedRef.current = new Set();
     setModalOpen(true);
     setOpen(false);
+  }
+
+  /** Mark a field as hand-edited so re-parsing never overwrites it. */
+  function touch(field: string, setter: (v: string) => void) {
+    return (v: string) => {
+      touchedRef.current.add(field);
+      setter(v);
+    };
+  }
+
+  /** Live chat-to-profile: parse the pasted message into the untouched fields. */
+  function onPaste(text: string) {
+    setPasteText(text);
+    const parsed = parseProfileMessage(text);
+    const touched = touchedRef.current;
+    if (parsed.cafeName && !touched.has("cafeName")) setCafeName(parsed.cafeName);
+    if (parsed.contactName && !touched.has("contactName")) setContactName(parsed.contactName);
+    if (parsed.email && !touched.has("email")) setEmail(parsed.email);
+    if (parsed.phone && !touched.has("phone")) setPhone(parsed.phone);
+    if (parsed.address1 && !touched.has("address1")) setAddress1(parsed.address1);
+    if (parsed.city && !touched.has("city")) setCity(parsed.city);
+    if (parsed.province && !touched.has("province")) setProvince(parsed.province);
+    if (parsed.zip && !touched.has("zip")) setZip(parsed.zip);
+    setLeftover(parsed.unmatched.join("\n"));
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -131,6 +185,15 @@ export function CafePicker({
           contactName: contactName.trim() || undefined,
           email: email.trim() || undefined,
           phone: phone.trim() || undefined,
+          address:
+            address1.trim() || city.trim() || province.trim() || zip.trim()
+              ? {
+                  address1: address1.trim() || undefined,
+                  city: city.trim() || undefined,
+                  province: province.trim() || undefined,
+                  zip: zip.trim() || undefined,
+                }
+              : undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -139,6 +202,9 @@ export function CafePicker({
       }
       setModalOpen(false);
       pick(data.customer as CafeCustomer);
+      // Whatever wasn't profile info is usually their sample order — hand
+      // it to the message box so one paste covers profile AND order.
+      if (leftover.trim() && onLeftoverOrderText) onLeftoverOrderText(leftover.trim());
       loadCustomers();
     } catch (err) {
       setModalError(
@@ -182,7 +248,7 @@ export function CafePicker({
             }}
             onFocus={() => setOpen(true)}
             onKeyDown={onKeyDown}
-            placeholder="Search cafes by name…"
+            placeholder="Search cafes or contact names…"
             className={inputClass}
           />
           {loadError && (
@@ -222,7 +288,15 @@ export function CafePicker({
                             : "text-forest-800"
                         )}
                       >
-                        <span className="truncate font-medium">{cafe.name}</span>
+                        <span className="min-w-0 truncate font-medium">
+                          {cafe.name}
+                          {cafe.contactName && cafe.contactName !== cafe.name && (
+                            <span className="font-normal text-forest-500">
+                              {" "}
+                              · {cafe.contactName}
+                            </span>
+                          )}
+                        </span>
                         {cafe.city && (
                           <span className="shrink-0 text-xs text-forest-500">
                             {cafe.city}
@@ -238,7 +312,7 @@ export function CafePicker({
                 onClick={openModal}
                 className="block w-full border-t border-forest-200 bg-forest-50 px-3 py-2 text-left text-sm font-semibold text-forest-700 transition-colors hover:bg-forest-100"
               >
-                + Add new cafe
+                + Add new cafe (paste their details)
               </button>
             </div>
           )}
@@ -246,58 +320,116 @@ export function CafePicker({
       )}
 
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-forest-950/40 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-forest-950/40 p-4">
           <form
             onSubmit={submitNewCafe}
-            className="w-full max-w-sm rounded-xl border border-forest-200 bg-white p-6 shadow-sm"
+            className="my-8 w-full max-w-md rounded-xl border border-forest-200 bg-white p-6 shadow-sm"
           >
             <h2 className="text-lg font-semibold text-forest-900">
               Add new cafe
             </h2>
             <p className="mt-1 text-sm text-forest-700">
-              Creates the customer in Shopify and selects it here.
+              Paste the customer&apos;s message below — name, number, cafe, and
+              address fill themselves in. Check the fields, then create. This
+              makes the Shopify profile in one step.
             </p>
-            <label className="mt-4 block text-sm font-medium text-forest-900">
-              Cafe name <span className="text-red-600">*</span>
-              <input
-                type="text"
-                autoFocus
-                value={cafeName}
-                onChange={(e) => setCafeName(e.target.value)}
-                placeholder="e.g. Slow Mornings Cafe"
-                className={clsx(inputClass, "mt-1 font-normal")}
-              />
-            </label>
-            <label className="mt-3 block text-sm font-medium text-forest-900">
-              Contact name
-              <input
-                type="text"
-                value={contactName}
-                onChange={(e) => setContactName(e.target.value)}
-                placeholder="Optional"
-                className={clsx(inputClass, "mt-1 font-normal")}
-              />
-            </label>
-            <label className="mt-3 block text-sm font-medium text-forest-900">
-              Email
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="Optional"
-                className={clsx(inputClass, "mt-1 font-normal")}
-              />
-            </label>
-            <label className="mt-3 block text-sm font-medium text-forest-900">
-              Phone
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="Optional"
-                className={clsx(inputClass, "mt-1 font-normal")}
-              />
-            </label>
+
+            <textarea
+              value={pasteText}
+              onChange={(e) => onPaste(e.target.value)}
+              rows={4}
+              placeholder={"Paste their chat message, e.g.\nName: Maria Santos\nContact: 0917 123 4567\nCafe: Slow Mornings\nAddress: 12 Mabini St, San Juan"}
+              className={clsx(inputClass, "mt-3 font-normal")}
+            />
+            {leftover && (
+              <p className="mt-1 text-xs text-forest-500">
+                Lines that look like an order will be moved to the message box
+                after creating.
+              </p>
+            )}
+
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="block text-sm font-medium text-forest-900 sm:col-span-2">
+                Cafe name <span className="text-red-600">*</span>
+                <input
+                  type="text"
+                  value={cafeName}
+                  onChange={(e) => touch("cafeName", setCafeName)(e.target.value)}
+                  placeholder="e.g. Slow Mornings Cafe"
+                  className={clsx(inputClass, "mt-1 font-normal")}
+                />
+              </label>
+              <label className="block text-sm font-medium text-forest-900">
+                Contact name
+                <input
+                  type="text"
+                  value={contactName}
+                  onChange={(e) => touch("contactName", setContactName)(e.target.value)}
+                  placeholder="Optional"
+                  className={clsx(inputClass, "mt-1 font-normal")}
+                />
+              </label>
+              <label className="block text-sm font-medium text-forest-900">
+                Phone
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => touch("phone", setPhone)(e.target.value)}
+                  placeholder="Optional"
+                  className={clsx(inputClass, "mt-1 font-normal")}
+                />
+              </label>
+              <label className="block text-sm font-medium text-forest-900 sm:col-span-2">
+                Email
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => touch("email", setEmail)(e.target.value)}
+                  placeholder="Optional"
+                  className={clsx(inputClass, "mt-1 font-normal")}
+                />
+              </label>
+              <label className="block text-sm font-medium text-forest-900 sm:col-span-2">
+                Delivery address
+                <input
+                  type="text"
+                  value={address1}
+                  onChange={(e) => touch("address1", setAddress1)(e.target.value)}
+                  placeholder="Street, barangay… (optional)"
+                  className={clsx(inputClass, "mt-1 font-normal")}
+                />
+              </label>
+              <label className="block text-sm font-medium text-forest-900">
+                City
+                <input
+                  type="text"
+                  value={city}
+                  onChange={(e) => touch("city", setCity)(e.target.value)}
+                  placeholder="Optional"
+                  className={clsx(inputClass, "mt-1 font-normal")}
+                />
+              </label>
+              <label className="block text-sm font-medium text-forest-900">
+                Province / ZIP
+                <span className="mt-1 flex gap-2">
+                  <input
+                    type="text"
+                    value={province}
+                    onChange={(e) => touch("province", setProvince)(e.target.value)}
+                    placeholder="Province"
+                    className={clsx(inputClass, "font-normal")}
+                  />
+                  <input
+                    type="text"
+                    value={zip}
+                    onChange={(e) => touch("zip", setZip)(e.target.value)}
+                    placeholder="ZIP"
+                    className={clsx(inputClass, "w-20 shrink-0 font-normal")}
+                  />
+                </span>
+              </label>
+            </div>
+
             {modalError && (
               <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                 {modalError}
@@ -317,7 +449,7 @@ export function CafePicker({
                 disabled={modalBusy || !cafeName.trim()}
                 className="rounded-md bg-forest-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-forest-800 disabled:opacity-50"
               >
-                {modalBusy ? "Adding…" : "Add cafe"}
+                {modalBusy ? "Creating profile…" : "Create Shopify profile"}
               </button>
             </div>
           </form>

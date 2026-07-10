@@ -45,6 +45,17 @@ create table if not exists app_settings (
 insert into app_settings (id, test_mode) values (1, false)
   on conflict (id) do nothing;
 
+-- Sample-credit usage: a row per draft created with a "Sample credit"
+-- discount, so the auto-suggest ("this cafe has ₱X of paid samples not yet
+-- credited") never offers the same credit twice. amount is PHP.
+create table if not exists sample_credits (
+  order_id text primary key,
+  customer_id text not null,
+  amount numeric not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists sample_credits_customer_idx on sample_credits (customer_id);
+
 -- RLS on, with NO policies: only the service-role/secret key (which the app
 -- uses server-side) can touch these tables. Without this, anyone holding the
 -- public "publishable" key could read orders through Supabase's REST API.
@@ -52,3 +63,4 @@ alter table orders enable row level security;
 alter table runtime_customers enable row level security;
 alter table order_history enable row level security;
 alter table app_settings enable row level security;
+alter table sample_credits enable row level security;

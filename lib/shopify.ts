@@ -21,10 +21,13 @@ import { shopifyMode } from "./config";
 import { CATALOG_SNAPSHOT } from "./catalog-snapshot";
 import { CUSTOMERS_SNAPSHOT } from "./customers-snapshot";
 import { joinNaturally, plural } from "./conversions";
-import { addRuntimeCustomer, historyRows, nextId, runtimeCustomers } from "./store";
+import { DELIVERY_METHODS } from "./delivery";
+import { VAT_RATE } from "./pricing";
+import { addRuntimeCustomer, getTestMode, historyRows, nextId, runtimeCustomers } from "./store";
 import type {
   CafeCustomer,
   CatalogProduct,
+  DraftTotals,
   Order,
   PricedItem,
   VariantRef,
@@ -41,12 +44,11 @@ interface ShopifyTokenCache {
 declare global {
   // eslint-disable-next-line no-var
   var __odShopifyToken: ShopifyTokenCache | undefined;
+  // eslint-disable-next-line no-var
+  var __odShopifyTokenPromise: Promise<string> | undefined;
 }
 
-async function getAccessToken(store: string): Promise<string> {
-  const staticToken = process.env.SHOPIFY_ADMIN_TOKEN;
-  if (staticToken) return staticToken;
-
+async function exchangeToken(store: string): Promise<string> {
   const clientId = process.env.SHOPIFY_CLIENT_ID;
   const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
@@ -54,10 +56,6 @@ async function getAccessToken(store: string): Promise<string> {
       "Shopify live mode requires SHOPIFY_ADMIN_TOKEN, or SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET."
     );
   }
-
-  const cached = globalThis.__odShopifyToken;
-  if (cached && Date.now() < cached.expiresAt - 60_000) return cached.token;
-
   const res = await fetch(`https://${store}.myshopify.com/admin/oauth/access_token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -66,6 +64,7 @@ async function getAccessToken(store: string): Promise<string> {
       client_id: clientId,
       client_secret: clientSecret,
     }),
+    cache: "no-store",
   });
   if (!res.ok) {
     throw new Error(`Shopify token exchange failed: ${await res.text()}`);
@@ -78,6 +77,29 @@ async function getAccessToken(store: string): Promise<string> {
   return json.access_token;
 }
 
+/**
+ * Shopify revokes the PREVIOUS client_credentials token whenever a new one
+ * is issued — so the exchange is single-flighted: concurrent callers (e.g.
+ * the report's two parallel range queries on a cold server) share one
+ * exchange instead of racing and revoking each other's tokens.
+ */
+async function getAccessToken(store: string, forceRefresh = false): Promise<string> {
+  const staticToken = process.env.SHOPIFY_ADMIN_TOKEN;
+  if (staticToken) return staticToken;
+
+  if (!forceRefresh) {
+    const cached = globalThis.__odShopifyToken;
+    if (cached && Date.now() < cached.expiresAt - 60_000) return cached.token;
+  }
+
+  if (!globalThis.__odShopifyTokenPromise) {
+    globalThis.__odShopifyTokenPromise = exchangeToken(store).finally(() => {
+      globalThis.__odShopifyTokenPromise = undefined;
+    });
+  }
+  return globalThis.__odShopifyTokenPromise;
+}
+
 // ── GraphQL client ───────────────────────────────────────────────────────
 
 async function adminGraphQL<T>(
@@ -88,10 +110,9 @@ async function adminGraphQL<T>(
   if (!store) {
     throw new Error("Shopify live mode requires SHOPIFY_STORE.");
   }
-  const token = await getAccessToken(store);
-  const res = await fetch(
-    `https://${store}.myshopify.com/admin/api/${API_VERSION}/graphql.json`,
-    {
+
+  const call = async (token: string): Promise<Response> =>
+    fetch(`https://${store}.myshopify.com/admin/api/${API_VERSION}/graphql.json`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -99,8 +120,15 @@ async function adminGraphQL<T>(
       },
       body: JSON.stringify({ query, variables }),
       cache: "no-store",
-    }
-  );
+    });
+
+  let res = await call(await getAccessToken(store));
+  if (res.status === 401) {
+    // The cached token was revoked (issuing a NEW client_credentials token
+    // anywhere — another instance, a script — kills the old one). Refresh
+    // once and retry.
+    res = await call(await getAccessToken(store, true));
+  }
   if (!res.ok) {
     throw new Error(`Shopify API ${res.status}: ${await res.text()}`);
   }
@@ -393,19 +421,251 @@ export async function getCustomerPastOrders(
   }));
 }
 
+/** Profile facts that seed per-order defaults (VAT box, delivery method). */
+export interface CustomerDefaults {
+  taxExempt: boolean;
+  tags: string[];
+  city?: string;
+  province?: string;
+}
+
+export async function getCustomerDefaults(
+  customerId: string
+): Promise<CustomerDefaults | null> {
+  if (shopifyMode() === "snapshot" || customerId.startsWith("mock:")) return null;
+  const data = await adminGraphQL<{
+    customer: {
+      taxExempt: boolean;
+      tags: string[];
+      defaultAddress: { city: string | null; province: string | null } | null;
+    } | null;
+  }>(
+    `query($id: ID!) {
+      customer(id: $id) {
+        taxExempt tags
+        defaultAddress { city province }
+      }
+    }`,
+    { id: customerId }
+  );
+  if (!data.customer) return null;
+  return {
+    taxExempt: data.customer.taxExempt,
+    tags: data.customer.tags,
+    city: data.customer.defaultAddress?.city ?? undefined,
+    province: data.customer.defaultAddress?.province ?? undefined,
+  };
+}
+
+/**
+ * ₱ this customer actually PAID for samples across their Shopify orders —
+ * the gross side of the sample-credit suggestion (free samples contribute
+ * ₱0 because line totals are post-discount). Sample lines are identified by
+ * their SAM- SKU prefix.
+ */
+export async function getPaidSampleTotal(customerId: string): Promise<number> {
+  if (shopifyMode() === "snapshot" || customerId.startsWith("mock:")) return 0;
+  const data = await adminGraphQL<{
+    customer: {
+      orders: {
+        edges: {
+          node: {
+            displayFinancialStatus: string | null;
+            lineItems: {
+              edges: {
+                node: {
+                  sku: string | null;
+                  discountedTotalSet: { shopMoney: { amount: string } };
+                };
+              }[];
+            };
+          };
+        }[];
+      };
+    } | null;
+  }>(
+    `query($id: ID!) {
+      customer(id: $id) {
+        orders(first: 50) {
+          edges { node {
+            displayFinancialStatus
+            lineItems(first: 30) { edges { node {
+              sku
+              discountedTotalSet { shopMoney { amount } }
+            } } }
+          } }
+        }
+      }
+    }`,
+    { id: customerId }
+  );
+  if (!data.customer) return 0;
+  let total = 0;
+  for (const { node: order } of data.customer.orders.edges) {
+    if (order.displayFinancialStatus !== "PAID") continue;
+    for (const { node: li } of order.lineItems.edges) {
+      if (li.sku?.startsWith("SAM-")) {
+        total += Number(li.discountedTotalSet.shopMoney.amount) || 0;
+      }
+    }
+  }
+  return Math.round(total * 100) / 100;
+}
+
+// ── Report data ──────────────────────────────────────────────────────────
+
+/** One Shopify order, flattened for report aggregation (lib/reports.ts). */
+export interface RawReportOrder {
+  name: string;
+  createdAt: string;
+  financialStatus: string;
+  cafe: string;
+  customerId: string;
+  /** Customer tags — "wholesale" distinguishes cafes from retail buyers. */
+  customerTags: string[];
+  /** Customer's lifetime order count — used to spot first-time cafes. */
+  customerLifetimeOrders: number;
+  total: number;
+  discounts: number;
+  tags: string[];
+  lineItems: {
+    title: string;
+    variantTitle: string;
+    sku: string;
+    quantity: number;
+    amount: number;
+  }[];
+}
+
+const REPORT_MAX_PAGES = 10; // 100 orders/page — plenty for any sane range
+
+/**
+ * Every Shopify order created in [from, to] (dates in PH time), newest
+ * first — the whole store, not just app-processed orders. Returns
+ * { orders, truncated } — truncated=true when the range has more than
+ * REPORT_MAX_PAGES×100 orders.
+ */
+export async function getOrdersInRange(
+  from: string,
+  to: string
+): Promise<{ orders: RawReportOrder[]; truncated: boolean }> {
+  if (shopifyMode() === "snapshot") return { orders: [], truncated: false };
+
+  interface Page {
+    orders: {
+      edges: {
+        node: {
+          name: string;
+          createdAt: string;
+          displayFinancialStatus: string | null;
+          tags: string[];
+          currentTotalPriceSet: { shopMoney: { amount: string } };
+          totalDiscountsSet: { shopMoney: { amount: string } };
+          customer: {
+            id: string;
+            displayName: string;
+            numberOfOrders: string;
+            tags: string[];
+            defaultAddress: { company: string | null } | null;
+          } | null;
+          lineItems: {
+            edges: {
+              node: {
+                title: string;
+                variantTitle: string | null;
+                sku: string | null;
+                quantity: number;
+                discountedTotalSet: { shopMoney: { amount: string } };
+              };
+            }[];
+          };
+        };
+      }[];
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    };
+  }
+
+  const search = `created_at:>='${from}T00:00:00+08:00' AND created_at:<='${to}T23:59:59+08:00'`;
+  const orders: RawReportOrder[] = [];
+  let after: string | null = null;
+  let truncated = false;
+
+  for (let page = 0; page < REPORT_MAX_PAGES; page++) {
+    const data: Page = await adminGraphQL<Page>(
+      `query($search: String!, $after: String) {
+        orders(first: 100, query: $search, after: $after, sortKey: CREATED_AT, reverse: true) {
+          edges { node {
+            name createdAt displayFinancialStatus tags
+            currentTotalPriceSet { shopMoney { amount } }
+            totalDiscountsSet { shopMoney { amount } }
+            customer { id displayName numberOfOrders tags defaultAddress { company } }
+            lineItems(first: 40) { edges { node {
+              title variantTitle sku quantity
+              discountedTotalSet { shopMoney { amount } }
+            } } }
+          } }
+          pageInfo { hasNextPage endCursor }
+        }
+      }`,
+      { search, after }
+    );
+    for (const { node } of data.orders.edges) {
+      orders.push({
+        name: node.name,
+        createdAt: node.createdAt,
+        financialStatus: node.displayFinancialStatus ?? "",
+        cafe:
+          node.customer?.defaultAddress?.company?.trim() ||
+          node.customer?.displayName ||
+          "(no customer)",
+        customerId: node.customer?.id ?? "",
+        customerTags: node.customer?.tags ?? [],
+        customerLifetimeOrders: Number(node.customer?.numberOfOrders ?? 0) || 0,
+        total: Number(node.currentTotalPriceSet.shopMoney.amount) || 0,
+        discounts: Number(node.totalDiscountsSet.shopMoney.amount) || 0,
+        tags: node.tags,
+        lineItems: node.lineItems.edges.map(({ node: li }) => ({
+          title: li.title,
+          variantTitle: li.variantTitle ?? "",
+          sku: li.sku ?? "",
+          quantity: li.quantity,
+          amount: Number(li.discountedTotalSet.shopMoney.amount) || 0,
+        })),
+      });
+    }
+    if (!data.orders.pageInfo.hasNextPage) return { orders, truncated: false };
+    after = data.orders.pageInfo.endCursor;
+  }
+  truncated = true; // ran out of pages with more orders still unfetched
+  return { orders, truncated };
+}
+
+export interface NewCustomerAddress {
+  address1?: string;
+  address2?: string;
+  city?: string;
+  province?: string;
+  zip?: string;
+}
+
 export async function createCafeCustomer(input: {
   cafeName: string;
   contactName?: string;
   email?: string;
   phone?: string;
+  address?: NewCustomerAddress;
 }): Promise<CafeCustomer> {
-  if (shopifyMode() === "snapshot") {
+  // Test mode fakes customer creation too — a Shopify profile is a real
+  // write. (To test REAL profile creation, e.g. with Jericho/Marco's test
+  // accounts, turn test mode off and delete the profile in Shopify after.)
+  if (shopifyMode() === "snapshot" || (await getTestMode())) {
     const customer: CafeCustomer = {
       shopifyId: `mock:Customer:${nextId("c_")}`,
       name: input.cafeName,
       contactName: input.contactName,
       email: input.email,
       phone: input.phone,
+      city: input.address?.city,
     };
     await addRuntimeCustomer(customer);
     return customer;
@@ -431,7 +691,18 @@ export async function createCafeCustomer(input: {
         email: input.email || undefined,
         phone: input.phone || undefined,
         tags: ["wholesale", "Order Desk"],
-        addresses: [{ company: input.cafeName }],
+        addresses: [
+          {
+            company: input.cafeName,
+            phone: input.phone || undefined,
+            address1: input.address?.address1 || undefined,
+            address2: input.address?.address2 || undefined,
+            city: input.address?.city || undefined,
+            province: input.address?.province || undefined,
+            zip: input.address?.zip || undefined,
+            country: input.address?.address1 ? "Philippines" : undefined,
+          },
+        ],
       },
     }
   );
@@ -445,6 +716,7 @@ export async function createCafeCustomer(input: {
     contactName: input.contactName,
     email: input.email,
     phone: input.phone,
+    city: input.address?.city,
   };
 }
 
@@ -454,6 +726,8 @@ export interface DraftLineItem {
   variantId: string;
   quantity: number;
   label: string;
+  /** Sample-sachet line — target of the "Free samples" 100% line discount. */
+  isSample?: boolean;
 }
 
 /**
@@ -476,6 +750,7 @@ export function buildDraftLineItems(
         variantId: product.sample.variantId,
         quantity: item.qty,
         label: `${product.title} sample × ${item.qty}`,
+        isSample: true,
       });
       continue;
     }
@@ -506,14 +781,176 @@ export interface DraftResult {
   draftUrl?: string;
 }
 
-export async function createDraftOrder(
+/**
+ * The ONE place the draft-order input is assembled — used verbatim by both
+ * calculateDraft() (preview/reprice) and createDraftOrder(), so the total
+ * Joey sends the cafe is exactly what the created draft will say.
+ *
+ * `vatAmount` > 0 adds the explicit "VAT (12%)" custom line. The store has
+ * no PH tax registration configured (verified 2026-07-07: taxExempt:false +
+ * PH address still calculates ₱0 tax), and enabling one store-wide would
+ * change RETAIL checkout too — so VAT is a visible line item instead of
+ * Shopify's tax engine. If the store ever configures PH taxes properly,
+ * swap this for `taxExempt: !order.options.chargeVat`.
+ */
+function buildDraftOrderInput(
+  order: Order,
+  lineItems: DraftLineItem[],
+  vatAmount: number
+): Record<string, unknown> {
+  const opts = order.options;
+  const delivery = opts.deliveryMethod ? DELIVERY_METHODS[opts.deliveryMethod] : null;
+
+  return {
+    lineItems: [
+      ...lineItems.map((l) => ({
+        variantId: l.variantId,
+        quantity: l.quantity,
+        ...(opts.freeSamples && l.isSample
+          ? { appliedDiscount: { value: 100, valueType: "PERCENTAGE", title: "Free samples" } }
+          : {}),
+      })),
+      ...(vatAmount > 0
+        ? [
+            {
+              title: "VAT (12%)",
+              originalUnitPrice: vatAmount,
+              quantity: 1,
+              requiresShipping: false,
+              taxable: false,
+            },
+          ]
+        : []),
+    ],
+    ...(order.customerId && !order.customerId.startsWith("mock:")
+      ? { purchasingEntity: { customerId: order.customerId } }
+      : {}),
+    note: `Order Desk — pasted Viber message from ${order.company}:\n${order.rawMessage}`,
+    tags: [
+      "Order Desk",
+      order.company,
+      ...(delivery ? [`Delivery: ${delivery.label}`] : []),
+    ],
+    useCustomerDefaultAddress: true,
+    // ALWAYS tax-exempt: the tickbox's explicit VAT line is the ONLY tax on
+    // a draft. Without this, Shopify's own PH registration adds 12% whenever
+    // the customer isn't tax-exempt (or no customer is attached) — observed
+    // live 2026-07-08 — which would stack on top of our VAT line.
+    taxExempt: true,
+    acceptAutomaticDiscounts: opts.applyEligibleDiscounts,
+    ...(opts.manualDiscount && opts.manualDiscount.value > 0
+      ? {
+          appliedDiscount: {
+            value: opts.manualDiscount.value,
+            valueType: opts.manualDiscount.valueType,
+            title: opts.manualDiscount.title || "Discount",
+          },
+        }
+      : {}),
+    ...(delivery
+      ? { shippingLine: { title: delivery.label, price: opts.deliveryFee ?? 0 } }
+      : {}),
+  };
+}
+
+interface CalculatedMoney {
+  subtotalPriceSet: { shopMoney: { amount: string } };
+  totalDiscountsSet: { shopMoney: { amount: string } };
+  totalShippingPriceSet: { shopMoney: { amount: string } };
+  totalPriceSet: { shopMoney: { amount: string } };
+}
+
+async function draftOrderCalculate(input: Record<string, unknown>): Promise<CalculatedMoney> {
+  const data = await adminGraphQL<{
+    draftOrderCalculate: {
+      calculatedDraftOrder: CalculatedMoney | null;
+      userErrors: { field: string[] | null; message: string }[];
+    };
+  }>(
+    `mutation($input: DraftOrderInput!) {
+      draftOrderCalculate(input: $input) {
+        calculatedDraftOrder {
+          subtotalPriceSet { shopMoney { amount } }
+          totalDiscountsSet { shopMoney { amount } }
+          totalShippingPriceSet { shopMoney { amount } }
+          totalPriceSet { shopMoney { amount } }
+        }
+        userErrors { field message }
+      }
+    }`,
+    { input }
+  );
+  const errs = data.draftOrderCalculate.userErrors;
+  const calc = data.draftOrderCalculate.calculatedDraftOrder;
+  if (errs.length || !calc) {
+    throw new Error(`draftOrderCalculate failed: ${errs.map((e) => e.message).join("; ") || "unknown"}`);
+  }
+  return calc;
+}
+
+const money = (set: { shopMoney: { amount: string } }): number =>
+  Number(set.shopMoney.amount) || 0;
+
+/**
+ * Shopify's own math for this order (persists NOTHING — safe in test mode):
+ * automatic discounts, manual discount, free samples, delivery fee, and the
+ * VAT line. Two passes when VAT is on: first to learn the discounted goods
+ * total the 12% applies to, second including the VAT line for the final
+ * total (so any automatic-discount interaction is visible, not guessed).
+ */
+export async function calculateDraft(
   order: Order,
   lineItems: DraftLineItem[]
+): Promise<DraftTotals> {
+  const base = await draftOrderCalculate(buildDraftOrderInput(order, lineItems, 0));
+  // Shopify's subtotalPrice is ALREADY NET of line + order discounts
+  // (verified against the live store 2026-07-08) — it IS the VAT base. The
+  // UI shows gross goods then −discounts, so report subtotal as net+disc.
+  const netGoods = money(base.subtotalPriceSet);
+  const discounts = money(base.totalDiscountsSet);
+  const grossGoods = Math.round((netGoods + discounts) * 100) / 100;
+
+  if (!order.options.chargeVat) {
+    return {
+      subtotal: grossGoods,
+      discounts,
+      vat: 0,
+      shipping: money(base.totalShippingPriceSet),
+      total: money(base.totalPriceSet),
+    };
+  }
+
+  const vat = Math.round(Math.max(netGoods, 0) * VAT_RATE * 100) / 100;
+  if (vat <= 0) {
+    return {
+      subtotal: grossGoods,
+      discounts,
+      vat: 0,
+      shipping: money(base.totalShippingPriceSet),
+      total: money(base.totalPriceSet),
+    };
+  }
+
+  const final = await draftOrderCalculate(buildDraftOrderInput(order, lineItems, vat));
+  return {
+    subtotal: grossGoods,
+    discounts,
+    vat,
+    shipping: money(final.totalShippingPriceSet),
+    total: money(final.totalPriceSet),
+  };
+}
+
+export async function createDraftOrder(
+  order: Order,
+  lineItems: DraftLineItem[],
+  /** The VAT line amount — pass order.totals?.vat (kept fresh by reprice). */
+  vatAmount: number
 ): Promise<DraftResult> {
   // Test-mode orders still price against real Shopify data (getCatalog,
-  // getCafeCustomers) — only the WRITE is faked, same mock: id path as
-  // snapshot mode. completeDraftAsPaid() below then skips its own Shopify
-  // call too, since it keys off the "mock:" prefix, not shopifyMode().
+  // getCafeCustomers, calculateDraft) — only the WRITE is faked, same mock:
+  // id path as snapshot mode. completeDraftAsPaid() below then skips its own
+  // Shopify call too, since it keys off the "mock:" prefix, not shopifyMode().
   if (shopifyMode() === "snapshot" || order.isTest) {
     const n = nextId("d_").replace("d_", "");
     const suffix = order.isTest ? "test" : "mock";
@@ -536,17 +973,7 @@ export async function createDraftOrder(
         userErrors { field message }
       }
     }`,
-    {
-      input: {
-        lineItems: lineItems.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
-        ...(order.customerId && !order.customerId.startsWith("mock:")
-          ? { purchasingEntity: { customerId: order.customerId } }
-          : {}),
-        note: `Order Desk — pasted Viber message from ${order.company}:\n${order.rawMessage}`,
-        tags: ["Order Desk", order.company],
-        useCustomerDefaultAddress: true,
-      },
-    }
+    { input: buildDraftOrderInput(order, lineItems, order.options.chargeVat ? vatAmount : 0) }
   );
   const errs = data.draftOrderCreate.userErrors;
   if (errs.length || !data.draftOrderCreate.draftOrder) {

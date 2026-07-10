@@ -8,6 +8,8 @@ import { CopyButton } from "@/components/CopyButton";
 import { StatusPill } from "@/components/StatusPill";
 import { TestBadge } from "@/components/TestBadge";
 import { Modal } from "@/components/Modal";
+import { DELIVERY_METHODS } from "@/lib/delivery";
+import { DraftOptionsPanel } from "./DraftOptionsPanel";
 import { LineItemEditor } from "./LineItemEditor";
 import {
   formatTime,
@@ -17,10 +19,64 @@ import {
   type TitleMap,
 } from "./format";
 
+/** Subtotal → discounts → VAT → delivery → total; plain Total when nothing extra. */
+function TotalsBreakdown({ order }: { order: Order }) {
+  const t = order.totals;
+  const interesting = t && (t.discounts > 0 || t.vat > 0 || t.shipping > 0);
+  return (
+    <div className="mt-2 space-y-0.5">
+      {interesting && (
+        <>
+          <div className="flex items-baseline justify-between gap-3 text-sm text-forest-700">
+            <span>Subtotal</span>
+            <span>{formatPeso(t.subtotal)}</span>
+          </div>
+          {t.discounts > 0 && (
+            <div className="flex items-baseline justify-between gap-3 text-sm text-forest-700">
+              <span>
+                Discounts
+                {order.options.manualDiscount ? ` · ${order.options.manualDiscount.title}` : ""}
+                {order.options.freeSamples ? " · free samples" : ""}
+              </span>
+              <span>−{formatPeso(t.discounts)}</span>
+            </div>
+          )}
+          {t.vat > 0 && (
+            <div className="flex items-baseline justify-between gap-3 text-sm text-forest-700">
+              <span>VAT (12%)</span>
+              <span>+{formatPeso(t.vat)}</span>
+            </div>
+          )}
+          {t.shipping > 0 && (
+            <div className="flex items-baseline justify-between gap-3 text-sm text-forest-700">
+              <span>
+                Delivery
+                {order.options.deliveryMethod
+                  ? ` · ${DELIVERY_METHODS[order.options.deliveryMethod].label}`
+                  : ""}
+              </span>
+              <span>+{formatPeso(t.shipping)}</span>
+            </div>
+          )}
+        </>
+      )}
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-sm font-semibold text-forest-900">
+          Total <span className="font-normal text-forest-500">(Shopify prices)</span>
+        </span>
+        <span className="text-base font-bold text-forest-900">
+          {formatPeso(order.total)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /**
  * One processed order, self-contained (mockup layout): line items with
- * per-line amounts → total from Shopify prices → the "Reply to send" block
- * with Copy → Edit lines + Confirm · create draft.
+ * per-line amounts → draft options (discounts/VAT/delivery) → total from
+ * Shopify prices → the "Reply to send" block with Copy → Edit lines +
+ * Confirm · create draft.
  */
 export function OrderCard({
   order,
@@ -166,15 +222,11 @@ export function OrderCard({
         </div>
       )}
 
-      {/* Total */}
-      <div className="mt-2 flex items-baseline justify-between gap-3">
-        <span className="text-sm font-semibold text-forest-900">
-          Total <span className="font-normal text-forest-500">(Shopify prices)</span>
-        </span>
-        <span className="text-base font-bold text-forest-900">
-          {formatPeso(order.total)}
-        </span>
-      </div>
+      {/* Draft options: discounts / VAT / delivery / free samples */}
+      <DraftOptionsPanel order={order} onOrderUpdate={onOrderUpdate} />
+
+      {/* Total (with breakdown when discounts/VAT/delivery are in play) */}
+      <TotalsBreakdown order={order} />
 
       {/* Reply to send */}
       <div
@@ -268,12 +320,22 @@ export function OrderCard({
             })}
           </div>
 
-          <div className="mt-2 flex items-baseline justify-between gap-3">
-            <span className="text-sm font-semibold text-forest-900">Total</span>
-            <span className="text-base font-bold text-forest-900">
-              {formatPeso(order.total)}
-            </span>
-          </div>
+          <TotalsBreakdown order={order} />
+
+          {/* What else lands on the draft */}
+          <ul className="mt-2 space-y-0.5 text-xs text-forest-600">
+            {order.options.applyEligibleDiscounts && (
+              <li>· Shopify will apply this cafe&apos;s eligible automatic discounts.</li>
+            )}
+            {order.options.deliveryMethod && (
+              <li>
+                · Shipping line: {DELIVERY_METHODS[order.options.deliveryMethod].label} (
+                {formatPeso(order.options.deliveryFee ?? 0)}) — tagged for packing.
+              </li>
+            )}
+            {order.options.chargeVat && <li>· VAT (12%) added as a line on the draft.</li>}
+            {order.options.freeSamples && <li>· Sample lines carry a 100% discount.</li>}
+          </ul>
 
           {draftError && <p className="mt-3 text-sm text-red-600">{draftError}</p>}
 

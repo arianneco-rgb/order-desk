@@ -2,14 +2,62 @@
 // Total = Σ(quantity × unit price). Full cases are billed at the Case
 // variant price; the remainder at the 200g pouch price (that's how the
 // draft order line items map to Shopify variants too).
+//
+// In LIVE mode the final total (discounts, VAT, delivery fee) comes from
+// Shopify's own draftOrderCalculate — see lib/shopify.ts calculateDraft().
+// localDraftTotals() below is the mock-mode / offline-fallback math; it
+// can't know the customer's automatic discounts, only the manual ones.
 
-import type { CatalogProduct, OrderItem, PricedItem } from "./types";
+import type { CatalogProduct, DraftOptions, DraftTotals, OrderItem, PricedItem } from "./types";
 import {
   MOQ_POUCHES,
   describeLine,
   joinNaturally,
   splitCases,
 } from "./conversions";
+
+export const VAT_RATE = 0.12;
+
+function roundPeso(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * Apply the draft options to a goods subtotal locally. Mirrors the draft's
+ * real structure: manual discount → free samples → VAT (12% of the
+ * discounted goods) → delivery fee. Automatic discounts are Shopify-side
+ * only and NOT included here.
+ */
+export function localDraftTotals(
+  priced: PricedItem[],
+  options: DraftOptions
+): DraftTotals {
+  const goods = orderTotal(priced);
+  const sampleAmount = priced
+    .filter((l) => l.form === "sample")
+    .reduce((sum, l) => sum + l.amount, 0);
+
+  let discounts = options.freeSamples ? sampleAmount : 0;
+  const discountable = goods - discounts;
+  if (options.manualDiscount) {
+    const d = options.manualDiscount;
+    discounts +=
+      d.valueType === "PERCENTAGE"
+        ? roundPeso((discountable * Math.min(Math.max(d.value, 0), 100)) / 100)
+        : Math.min(Math.max(d.value, 0), discountable);
+  }
+
+  const vat = options.chargeVat ? roundPeso((goods - discounts) * VAT_RATE) : 0;
+  const shipping = options.deliveryMethod ? (options.deliveryFee ?? 0) : 0;
+
+  return {
+    subtotal: goods,
+    discounts: roundPeso(discounts),
+    vat,
+    shipping,
+    total: roundPeso(goods - discounts + vat + shipping),
+  };
+}
 
 export function priceItems(
   items: OrderItem[],

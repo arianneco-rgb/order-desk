@@ -20,7 +20,9 @@ export async function GET() {
 
 /**
  * Add a cafe that isn't listed: create it in Shopify → re-sync the
- * Customers sheet tab → it appears in the dropdown.
+ * Customers sheet tab → it appears in the dropdown. The chat-to-profile
+ * flow posts here too, with the parsed (user-confirmed) address included
+ * so delivery defaults work from day one.
  */
 export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => ({}))) as {
@@ -28,17 +30,36 @@ export async function POST(request: NextRequest) {
     contactName?: string;
     email?: string;
     phone?: string;
+    address?: {
+      address1?: string;
+      address2?: string;
+      city?: string;
+      province?: string;
+      zip?: string;
+    };
   };
   const cafeName = body.cafeName?.trim();
   if (!cafeName) {
     return NextResponse.json({ error: "Cafe name is required." }, { status: 400 });
   }
+  const field = (v: unknown, max: number): string | undefined =>
+    typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined;
   try {
+    const address = body.address
+      ? {
+          address1: field(body.address.address1, 200),
+          address2: field(body.address.address2, 200),
+          city: field(body.address.city, 60),
+          province: field(body.address.province, 60),
+          zip: field(body.address.zip, 10),
+        }
+      : undefined;
     const customer = await createCafeCustomer({
       cafeName,
-      contactName: body.contactName?.trim() || undefined,
-      email: body.email?.trim() || undefined,
-      phone: body.phone?.trim() || undefined,
+      contactName: field(body.contactName, 100),
+      email: field(body.email, 100),
+      phone: field(body.phone, 20),
+      address: address && Object.values(address).some(Boolean) ? address : undefined,
     });
     await syncCustomersToSheet();
     return NextResponse.json({ customer }, { status: 201 });

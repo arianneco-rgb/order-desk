@@ -54,6 +54,17 @@ function isLive(): boolean {
   return dbMode() === "supabase";
 }
 
+/** Draft-option defaults; per-customer defaults are applied during processing. */
+export function defaultDraftOptions(): Order["options"] {
+  return { applyEligibleDiscounts: true, chargeVat: false, freeSamples: false };
+}
+
+/** Orders written before DraftOptions existed lack `options` — fill on read. */
+function normalizeOrder(order: Order): Order {
+  if (!order.options) order.options = defaultDraftOptions();
+  return order;
+}
+
 async function newOrder(input: {
   company: string;
   customerId?: string;
@@ -71,6 +82,7 @@ async function newOrder(input: {
     needsReview: false,
     reviewReasons: [],
     reply: "",
+    options: defaultDraftOptions(),
     payment: { confirmed: false },
     createdAt: now.toISOString(),
     processAfter: new Date(now.getTime() + PROCESS_DELAY_MS).toISOString(),
@@ -129,7 +141,8 @@ export async function getOrder(id: string): Promise<Order | undefined> {
     .eq("id", id)
     .maybeSingle();
   if (error) throw new Error(`Supabase order fetch failed: ${error.message}`);
-  return (data?.data as Order | undefined) ?? undefined;
+  const order = data?.data as Order | undefined;
+  return order ? normalizeOrder(order) : undefined;
 }
 
 export async function listOrders(): Promise<Order[]> {
@@ -143,7 +156,7 @@ export async function listOrders(): Promise<Order[]> {
     .select("data")
     .order("created_at", { ascending: false });
   if (error) throw new Error(`Supabase order list failed: ${error.message}`);
-  return (data ?? []).map((row) => row.data as Order);
+  return (data ?? []).map((row) => normalizeOrder(row.data as Order));
 }
 
 export async function saveOrder(order: Order): Promise<void> {
@@ -259,4 +272,51 @@ export async function unlockOrder(id: string): Promise<void> {
   }
   const { error } = await supabase().from("orders").update({ locked_at: null }).eq("id", id);
   if (error) throw new Error(`Supabase lock release failed: ${error.message}`);
+}
+
+// ── Sample credits ───────────────────────────────────────────────────────
+// A row per draft created with a "Sample credit" manual discount, so the
+// auto-suggest never offers the same credit twice. Memory mode keeps these
+// only for the session (fine for demos).
+
+interface SampleCreditRow {
+  orderId: string;
+  customerId: string;
+  amount: number;
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __odSampleCredits: SampleCreditRow[] | undefined;
+}
+
+function memCredits(): SampleCreditRow[] {
+  if (!globalThis.__odSampleCredits) globalThis.__odSampleCredits = [];
+  return globalThis.__odSampleCredits;
+}
+
+export async function recordSampleCredit(row: SampleCreditRow): Promise<void> {
+  if (!isLive()) {
+    if (!memCredits().some((c) => c.orderId === row.orderId)) memCredits().push(row);
+    return;
+  }
+  const { error } = await supabase()
+    .from("sample_credits")
+    .upsert({ order_id: row.orderId, customer_id: row.customerId, amount: row.amount });
+  if (error) throw new Error(`Supabase sample credit insert failed: ${error.message}`);
+}
+
+/** Total ₱ of sample credit already applied to drafts for this customer. */
+export async function usedSampleCredit(customerId: string): Promise<number> {
+  if (!isLive()) {
+    return memCredits()
+      .filter((c) => c.customerId === customerId)
+      .reduce((sum, c) => sum + c.amount, 0);
+  }
+  const { data, error } = await supabase()
+    .from("sample_credits")
+    .select("amount")
+    .eq("customer_id", customerId);
+  if (error) throw new Error(`Supabase sample credit fetch failed: ${error.message}`);
+  return (data ?? []).reduce((sum, r) => sum + Number(r.amount), 0);
 }

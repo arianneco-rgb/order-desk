@@ -134,7 +134,16 @@ export default function PastePage() {
           </span>
         </label>
         <div className="mt-1.5">
-          <CafePicker selected={cafe} onSelect={setCafe} />
+          <CafePicker
+            selected={cafe}
+            onSelect={setCafe}
+            onLeftoverOrderText={(text) => {
+              // The non-profile lines of the pasted message are usually the
+              // sample order itself — drop them into the message box.
+              setMessage((prev) => (prev.trim() ? prev : text));
+              document.getElementById("raw-message")?.focus();
+            }}
+          />
         </div>
         <p className="mt-1.5 text-xs text-forest-500">
           New cafes are added in Shopify — they sync into the Customers sheet

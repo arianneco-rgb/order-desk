@@ -72,6 +72,50 @@ export interface PaymentInfo {
   confirmed: boolean;
 }
 
+/** Keys match DELIVERY_METHODS in lib/delivery.ts (labels + draft shipping line). */
+export type DeliveryMethod = "pickup" | "mm_delivery" | "jnt_nationwide";
+
+export interface ManualDiscount {
+  valueType: "FIXED_AMOUNT" | "PERCENTAGE";
+  /** Pesos for FIXED_AMOUNT, 0–100 for PERCENTAGE. */
+  value: number;
+  /** Shown on the Shopify draft, e.g. "Sample credit". */
+  title: string;
+}
+
+/**
+ * Per-order choices Joey makes before creating the draft (team-requested:
+ * discounts, VAT, delivery). Defaults come from the Shopify customer profile
+ * (address → delivery, "Invoice Requested" tag → VAT) — always overridable.
+ * Frozen once the draft exists; editing them invalidates the draft, same as
+ * editing line items.
+ */
+export interface DraftOptions {
+  /** Shopify applies the customer's eligible automatic discounts (acceptAutomaticDiscounts). */
+  applyEligibleDiscounts: boolean;
+  manualDiscount?: ManualDiscount;
+  /**
+   * Adds an explicit "VAT (12%)" line to the draft (12% of the discounted
+   * goods total). NOT Shopify's tax engine — the store has no PH tax
+   * registration configured, and enabling one would change retail checkout.
+   */
+  chargeVat: boolean;
+  deliveryMethod?: DeliveryMethod;
+  /** Optional ₱ on the draft's shipping line (usually 0 — fee billed separately). */
+  deliveryFee?: number;
+  /** 100% line discount on sample lines — samples stay on record, charged ₱0. */
+  freeSamples: boolean;
+}
+
+/** Shopify-calculated money breakdown (draftOrderCalculate) — shown in the preview. */
+export interface DraftTotals {
+  subtotal: number;
+  discounts: number;
+  vat: number;
+  shipping: number;
+  total: number;
+}
+
 export interface Order {
   id: string;
   /** Cafe name shown everywhere. */
@@ -94,6 +138,15 @@ export interface Order {
   reply: string;
   /** The paid-confirmation reply, revealed after Confirm payment. */
   paidReply?: string;
+  /** Discounts/VAT/delivery choices — set during processing, edited by Joey. */
+  options: DraftOptions;
+  /**
+   * The breakdown backing `total`, refreshed on every reprice. Live mode:
+   * Shopify's own draftOrderCalculate (includes automatic discounts).
+   * Mock mode / Shopify hiccup: local math (lib/pricing.ts localDraftTotals).
+   * Undefined only on orders that haven't been processed yet.
+   */
+  totals?: DraftTotals;
   payment: PaymentInfo;
   createdAt: string;
   /** Internal state-machine timestamp: when "processing" may complete. */
