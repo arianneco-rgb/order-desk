@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "Ritual Matcha Co. — Order Desk: paste Viber orders → Shopify drafts + ready replies, BPI payment matching, one clean history.",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
