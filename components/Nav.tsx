@@ -129,6 +129,7 @@ export function Nav() {
       modes.bpi !== "live");
 
   const links = [
+    { href: "/", label: "Home", count: null as number | null },
     { href: "/paste", label: "Paste order", count: null as number | null },
     { href: "/queue", label: "Queue", count: counts?.queue ?? null },
     { href: "/processed", label: "Processed", count: counts?.processed ?? null },
@@ -186,7 +187,7 @@ export function Nav() {
   return (
     <header className="sticky top-0 z-40 border-b border-forest-800/20 bg-forest-900 text-cream shadow-sm">
       <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:gap-6 sm:px-6">
-        <Link href="/paste" className="flex min-w-0 flex-1 items-center gap-2.5 sm:flex-initial">
+        <Link href="/" className="flex min-w-0 flex-1 items-center gap-2.5 sm:flex-initial">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/logo.png"
@@ -208,7 +209,8 @@ export function Nav() {
         {/* Desktop nav (lg and up — narrower than that, 6 links don't fit) */}
         <nav className="hidden flex-1 items-center gap-1 overflow-x-auto lg:flex">
           {links.map((link) => {
-            const active = pathname.startsWith(link.href);
+            const active =
+              link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
             return (
               <Link
                 key={link.href}
@@ -271,7 +273,8 @@ export function Nav() {
         >
           <div className="flex flex-col gap-1">
             {links.map((link) => {
-              const active = pathname.startsWith(link.href);
+              const active =
+              link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
               return (
                 <Link
                   key={link.href}

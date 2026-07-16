@@ -20,7 +20,7 @@ export default function LoginPage() {
         body: JSON.stringify({ password }),
       });
       if (res.ok) {
-        router.push("/paste");
+        router.push("/");
         router.refresh();
         return;
       }
