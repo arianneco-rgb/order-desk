@@ -7,30 +7,42 @@
 import { formatPeso } from "./conversions";
 import type { DeliveryMethod } from "./types";
 
-/** The reply for a new order. {TOTAL} and {ITEMS} are filled in. */
+/**
+ * The reply for a new order. {TOTAL} and {ITEMS} are filled in. Blank lines
+ * between the sections (total → payment details → closing) per the team's
+ * July 2026 feedback — the one-block version was hard to read in Viber.
+ */
 export function totalOrderReply(total: number, itemsText: string): string {
   return `The total is ${formatPeso(total)} for ${itemsText}!
+
 You can send to:
 Bank of the Philippine Islands (BPI)
 Account: RMC Ritual Trading Corporation
 Account Number: 2561013163
-We will process your order after payment is received! Kindly note that our lead time is 3-5 days upon payment. Thank you! 🙂`;
+
+We will process your order after payment is received!
+Kindly note that our lead time is 3-5 days upon payment.
+Thank you! 🙂`;
 }
 
 /** Revealed after Joey confirms a payment. */
 export function paidConfirmationReply(itemsText: string, total: number): string {
   return `Payment received — thank you! 🙂
+
 Your order for ${itemsText} (${formatPeso(total)}) is confirmed and now being prepared.
+
 Lead time is 3-5 days. We'll message you once it's ready for delivery or pickup!`;
 }
 
 /** Gentle nudge for drafts that have sat unpaid — the follow-up queue's copy button. */
 export function paymentReminderReply(total: number): string {
   return `Hi! Just a gentle follow-up on your pending order (${formatPeso(total)}) 🙂
+
 Sending the payment details again for convenience:
 Bank of the Philippine Islands (BPI)
 Account: RMC Ritual Trading Corporation
 Account Number: 2561013163
+
 We'll process the order as soon as payment comes through — lead time is 3-5 days upon payment. Thank you! 🙂`;
 }
 

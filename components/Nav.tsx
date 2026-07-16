@@ -83,12 +83,15 @@ export function Nav() {
           : [];
         if (cancelled) return;
         setCounts({
+          // Queue = the working stage: parsing + being worked on.
           queue: orders.filter(
-            (o) => o.status === "queued" || o.status === "processing"
+            (o) =>
+              o.status === "queued" ||
+              o.status === "processing" ||
+              o.status === "processed"
           ).length,
-          processed: orders.filter(
-            (o) => o.status === "processed" || o.status === "draft_created"
-          ).length,
+          // Processed = finalized drafts awaiting payment confirmation.
+          processed: orders.filter((o) => o.status === "draft_created").length,
           history: historyRows.length,
         });
       } catch {

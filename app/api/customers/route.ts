@@ -28,6 +28,8 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => ({}))) as {
     cafeName?: string;
     contactName?: string;
+    firstName?: string;
+    lastName?: string;
     email?: string;
     phone?: string;
     address?: {
@@ -57,6 +59,8 @@ export async function POST(request: NextRequest) {
     const customer = await createCafeCustomer({
       cafeName,
       contactName: field(body.contactName, 100),
+      firstName: field(body.firstName, 60),
+      lastName: field(body.lastName, 60),
       email: field(body.email, 100),
       phone: field(body.phone, 20),
       address: address && Object.values(address).some(Boolean) ? address : undefined,

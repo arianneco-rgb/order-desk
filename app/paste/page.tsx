@@ -6,9 +6,13 @@ import clsx from "clsx";
 import type { CafeCustomer, Order } from "@/lib/types";
 import { CafePicker } from "@/components/paste/CafePicker";
 import { CafeOrderHistory } from "@/components/paste/CafeOrderHistory";
+import { NewCustomerPanel } from "@/components/paste/NewCustomerPanel";
 import { Kbd, isMac } from "@/components/Kbd";
 
+type PasteMode = "existing" | "new";
+
 export default function PastePage() {
+  const [mode, setMode] = useState<PasteMode>("existing");
   const [cafe, setCafe] = useState<CafeCustomer | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -122,7 +126,57 @@ export default function PastePage() {
         Pick the cafe, paste the Viber message, send it to the queue.
       </p>
 
-      <div className="mt-6 rounded-xl border border-forest-200 bg-white p-6 shadow-sm">
+      {/* Existing cafe ↔ New customer (feedback round 4: a dedicated
+          paste→parse→flag→submit step for customer profiles) */}
+      <div className="mt-4 inline-flex rounded-lg border border-forest-200 bg-white p-0.5 shadow-sm">
+        {(
+          [
+            { key: "existing", label: "Existing cafe" },
+            { key: "new", label: "New customer" },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setMode(tab.key)}
+            className={clsx(
+              "rounded-md px-4 py-1.5 text-sm font-medium transition-colors",
+              mode === tab.key
+                ? "bg-forest-700 text-white"
+                : "text-forest-700 hover:bg-forest-50"
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {mode === "new" && (
+        <div className="mt-4 rounded-xl border border-forest-200 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-forest-900">
+            New customer profile
+          </h2>
+          <p className="mt-1 text-sm text-forest-600">
+            Paste the client&apos;s reply → the profile fields fill in → fix
+            anything flagged → create the Shopify profile → their order starts
+            right after.
+          </p>
+          <div className="mt-4">
+            <NewCustomerPanel
+              onCreated={(customer, leftoverOrderText) => {
+                setCafe(customer);
+                setMode("existing");
+                if (leftoverOrderText) {
+                  setMessage((prev) => (prev.trim() ? prev : leftoverOrderText));
+                }
+                setTimeout(() => document.getElementById("raw-message")?.focus(), 50);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      <div className={clsx("mt-4 rounded-xl border border-forest-200 bg-white p-6 shadow-sm", mode !== "existing" && "hidden")}>
         <h2 className="text-base font-semibold text-forest-900">
           Paste an order message
         </h2>
@@ -147,7 +201,15 @@ export default function PastePage() {
         </div>
         <p className="mt-1.5 text-xs text-forest-500">
           New cafes are added in Shopify — they sync into the Customers sheet
-          and appear here automatically.
+          and appear here automatically. First time ordering?{" "}
+          <button
+            type="button"
+            onClick={() => setMode("new")}
+            className="font-semibold text-forest-700 underline hover:text-forest-900"
+          >
+            Use the New customer tab
+          </button>
+          .
         </p>
 
         {cafe && (
@@ -194,8 +256,8 @@ export default function PastePage() {
         <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <p className="text-xs text-forest-500">
             Sends to the queue and clears the box so you can paste the next
-            one. The dashboard parses it, then it moves to Processed on its
-            own.
+            one. The dashboard parses it, then it waits in the Queue for you
+            to review and finalize.
           </p>
           <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-xs text-forest-500">
             <Kbd>{mac ? "⌘" : "Ctrl"}</Kbd>+<Kbd>Enter</Kbd> to send

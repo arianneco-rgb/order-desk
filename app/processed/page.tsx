@@ -1,10 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import clsx from "clsx";
+import Link from "next/link";
 import type { CatalogProduct, Order } from "@/lib/types";
-import { OrdersTable } from "@/components/processed/OrdersTable";
-import { OrdersKanban } from "@/components/processed/OrdersKanban";
 import { OrderCard } from "@/components/processed/OrderCard";
 import { PaymentPane } from "@/components/processed/PaymentPane";
 import { FollowUpQueue } from "@/components/processed/FollowUpQueue";
@@ -12,15 +10,19 @@ import { buildTitleMap } from "@/components/processed/format";
 import { SkeletonCard } from "@/components/Skeleton";
 import { Kbd } from "@/components/Kbd";
 
-type View = "kanban" | "table";
-const VIEW_KEY = "od-processed-view";
 const POLL_MS = 2500;
 // Skip applying polled data to the selected order right after a local
 // mutation, so a stale in-flight poll can't clobber a fresh PATCH result.
 const MUTATION_GRACE_MS = 1500;
 
+/**
+ * Feedback round 4: Processed holds ONLY finalized orders — draft created,
+ * awaiting payment confirmation. All working-stage editing lives on the
+ * Queue; editing an order here invalidates its draft and bounces it back
+ * to the Queue automatically.
+ */
 function isVisible(order: Order): boolean {
-  return order.status === "processed" || order.status === "draft_created";
+  return order.status === "draft_created";
 }
 
 function newestFirst(a: Order, b: Order): number {
@@ -39,7 +41,6 @@ function matchesQuery(order: Order, q: string): boolean {
 export default function ProcessedPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
-  const [view, setView] = useState<View>("kanban");
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -63,21 +64,6 @@ export default function ProcessedPage() {
   function setSelected(order: Order | null) {
     selectedRef.current = order;
     setSelectedOrder(order);
-  }
-
-  // Read the persisted view in an effect to avoid a hydration mismatch.
-  useEffect(() => {
-    const stored = window.localStorage.getItem(VIEW_KEY);
-    if (stored === "table" || stored === "kanban") setView(stored);
-  }, []);
-
-  function changeView(next: View) {
-    setView(next);
-    try {
-      window.localStorage.setItem(VIEW_KEY, next);
-    } catch {
-      // localStorage unavailable — the toggle still works for this session.
-    }
   }
 
   // Load the catalog once (product titles + editor options + line prices).
@@ -198,7 +184,7 @@ export default function ProcessedPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [visibleOrders]);
 
-  // Server-confirmed updates (PATCH lines, draft, proof, bpi-match, confirm).
+  // Server-confirmed updates (PATCH lines/options, proof, bpi-match, confirm).
   const handleOrderUpdate = useCallback((order: Order) => {
     lastMutationRef.current = Date.now();
     setOrders((prev) => {
@@ -213,6 +199,14 @@ export default function ProcessedPage() {
       <h1 className="text-2xl font-semibold tracking-tight text-forest-900">
         Processed + Payments
       </h1>
+      <p className="mt-1 text-sm text-forest-700">
+        Finalized orders — draft created, awaiting payment confirmation.
+        Editing an order here invalidates its draft and sends it back to the{" "}
+        <Link href="/queue" className="font-semibold text-forest-800 underline">
+          Queue
+        </Link>
+        .
+      </p>
 
       {loadError && (
         <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -227,49 +221,30 @@ export default function ProcessedPage() {
         onSelect={handleSelect}
       />
 
-      {/* Split screen: Processed orders card · Payment verification card */}
+      {/* Split screen: finalized orders · payment verification */}
       <div className="mt-4 grid grid-cols-1 items-start gap-6 lg:grid-cols-5">
-        {/* LEFT card: processed orders */}
+        {/* LEFT card: finalized orders awaiting payment */}
         <div className="rounded-xl border border-forest-200 bg-white p-5 shadow-sm lg:col-span-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-base font-semibold text-forest-900">
-              Processed orders
+              Awaiting payment
             </h2>
-            <div className="inline-flex rounded-lg border border-forest-200 bg-white p-0.5 shadow-sm">
-              {(["kanban", "table"] as const).map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => changeView(v)}
-                  className={clsx(
-                    "rounded-md px-3 py-1 text-sm font-medium transition-colors",
-                    view === v
-                      ? "bg-forest-700 text-white"
-                      : "text-forest-700 hover:bg-forest-50"
-                  )}
-                >
-                  {v === "kanban" ? "Kanban" : "Table"}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-            <div className="relative min-w-0 flex-1">
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search cafe or message…"
-                aria-label="Search orders"
-                className="w-full rounded-md border border-forest-300 bg-white px-3 py-1.5 text-sm text-forest-900 placeholder:text-forest-400 focus:border-forest-600 focus:outline-none"
-              />
-            </div>
             <p className="flex shrink-0 items-center gap-1 text-xs text-forest-500">
               <Kbd>↑</Kbd>
               <Kbd>↓</Kbd>
               <span>to navigate</span>
             </p>
+          </div>
+
+          <div className="mt-4">
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search cafe or message…"
+              aria-label="Search orders"
+              className="w-full rounded-md border border-forest-300 bg-white px-3 py-1.5 text-sm text-forest-900 placeholder:text-forest-400 focus:border-forest-600 focus:outline-none"
+            />
           </div>
 
           <div className="mt-4">
@@ -281,40 +256,31 @@ export default function ProcessedPage() {
               </div>
             ) : sortedOrders.length === 0 ? (
               <div className="rounded-lg border-2 border-dashed border-forest-200 p-8 text-center text-sm text-forest-500">
-                No processed orders right now — new orders land here once
-                parsing finishes on the Queue.
+                Nothing awaiting payment — orders land here once you{" "}
+                <span className="font-semibold">Confirm · create draft</span> on
+                the{" "}
+                <Link href="/queue" className="font-semibold text-forest-700 underline">
+                  Queue
+                </Link>
+                .
               </div>
             ) : visibleOrders.length === 0 ? (
               <div className="rounded-lg border-2 border-dashed border-forest-200 p-8 text-center text-sm text-forest-500">
                 No orders match “{query}”.
               </div>
-            ) : view === "kanban" ? (
-              <OrdersKanban
-                orders={visibleOrders}
-                catalog={catalog}
-                titles={titles}
-                selectedId={selectedOrder?.id ?? null}
-                onSelect={handleSelect}
-                onOrderUpdate={handleOrderUpdate}
-              />
             ) : (
               <div className="space-y-4">
-                <OrdersTable
-                  orders={visibleOrders}
-                  titles={titles}
-                  selectedId={selectedOrder?.id ?? null}
-                  onSelect={handleSelect}
-                />
-                {selectedOrder && isVisible(selectedOrder) && (
+                {visibleOrders.map((order) => (
                   <OrderCard
-                    order={selectedOrder}
+                    key={order.id}
+                    order={order}
                     catalog={catalog}
                     titles={titles}
-                    selected
+                    selected={order.id === selectedOrder?.id}
                     onSelect={handleSelect}
                     onOrderUpdate={handleOrderUpdate}
                   />
-                )}
+                ))}
               </div>
             )}
           </div>

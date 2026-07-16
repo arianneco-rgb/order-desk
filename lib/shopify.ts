@@ -651,6 +651,9 @@ export interface NewCustomerAddress {
 export async function createCafeCustomer(input: {
   cafeName: string;
   contactName?: string;
+  /** Explicit split (from the profile form) — falls back to splitting contactName. */
+  firstName?: string;
+  lastName?: string;
   email?: string;
   phone?: string;
   address?: NewCustomerAddress;
@@ -671,7 +674,12 @@ export async function createCafeCustomer(input: {
     return customer;
   }
 
-  const [firstName, ...rest] = (input.contactName || input.cafeName).split(/\s+/);
+  // Explicit first/last from the profile form wins; otherwise split the
+  // contact name on its last word (matching the profile field table:
+  // "First name / Last name — from client message 'Name'").
+  const [fallbackFirst, ...rest] = (input.contactName || input.cafeName).split(/\s+/);
+  const firstName = input.firstName?.trim() || fallbackFirst;
+  const lastName = input.lastName?.trim() || rest.join(" ") || undefined;
   const data = await adminGraphQL<{
     customerCreate: {
       customer: { id: string; displayName: string } | null;
@@ -687,12 +695,16 @@ export async function createCafeCustomer(input: {
     {
       input: {
         firstName,
-        lastName: rest.join(" ") || undefined,
+        lastName,
         email: input.email || undefined,
         phone: input.phone || undefined,
         tags: ["wholesale", "Order Desk"],
         addresses: [
           {
+            // The delivery address carries the person's name too, per the
+            // team's profile field table.
+            firstName,
+            lastName,
             company: input.cafeName,
             phone: input.phone || undefined,
             address1: input.address?.address1 || undefined,

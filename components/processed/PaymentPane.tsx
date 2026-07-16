@@ -177,10 +177,12 @@ export function PaymentPane({
         <div className="mt-4">
           <p className="text-sm">
             <span className="font-semibold text-forest-900">{order.company}</span>{" "}
-            <span className="text-forest-500">· create the draft first</span>
+            <span className="text-forest-500">· back in the Queue</span>
           </p>
           <p className="mt-3 rounded-lg border-2 border-dashed border-forest-200 p-6 text-center text-sm text-forest-500">
-            Payment verification unlocks once the Shopify draft exists.
+            This order isn&apos;t finalized (its draft was invalidated by an
+            edit, or none was created yet). Finish it on the Queue — payment
+            verification unlocks once the draft exists.
           </p>
         </div>
       )}
