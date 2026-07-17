@@ -2,18 +2,23 @@
 
 import { useState } from "react";
 import clsx from "clsx";
+import { useToast } from "@/components/Toast";
 
-/** Copy-to-clipboard with a brief "Copied ✓" confirmation. */
+/** Copy-to-clipboard with a brief "Copied ✓" confirmation + a toast. */
 export function CopyButton({
   text,
   label = "Copy",
+  toastLabel = "Copied to clipboard",
   className,
 }: {
   text: string;
   label?: string;
+  /** What the toast says — e.g. "Reply copied". */
+  toastLabel?: string;
   className?: string;
 }) {
   const [copied, setCopied] = useState(false);
+  const toast = useToast();
 
   async function copy() {
     try {
@@ -28,6 +33,7 @@ export function CopyButton({
       document.body.removeChild(ta);
     }
     setCopied(true);
+    toast(toastLabel);
     setTimeout(() => setCopied(false), 1500);
   }
 

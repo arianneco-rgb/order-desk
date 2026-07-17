@@ -4,6 +4,8 @@ import { useState } from "react";
 import clsx from "clsx";
 import type { CatalogProduct, Order } from "@/lib/types";
 import { formatPeso, formatPouchQty, formatSampleQty } from "@/lib/conversions";
+import { priceItems, itemsText } from "@/lib/pricing";
+import { totalOrderReply } from "@/lib/templates";
 import { CopyButton } from "@/components/CopyButton";
 import { StatusPill } from "@/components/StatusPill";
 import { TestBadge } from "@/components/TestBadge";
@@ -228,19 +230,33 @@ export function OrderCard({
       {/* Total (with breakdown when discounts/VAT/delivery are in play) */}
       <TotalsBreakdown order={order} />
 
-      {/* Reply to send */}
-      <div
-        className="mt-3 rounded-lg border border-forest-100 bg-forest-50 p-3"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-sm font-semibold text-forest-800">Reply to send</p>
-          <CopyButton text={order.reply} label="Copy" />
-        </div>
-        <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-forest-900">
-          {order.reply}
-        </p>
-      </div>
+      {/* Reply to send — regenerated from the CURRENT template + total so the
+          section spacing is always right, even on orders whose stored reply
+          predates the formatting fix. Falls back to the stored reply until
+          the catalog has loaded (needed to describe the line items). */}
+      {(() => {
+        const reply =
+          catalog.length && order.items.length
+            ? totalOrderReply(
+                order.total,
+                itemsText(priceItems(order.items, catalog)) || "your order"
+              )
+            : order.reply;
+        return (
+          <div
+            className="mt-3 rounded-lg border border-forest-100 bg-forest-50 p-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-forest-800">Reply to send</p>
+              <CopyButton text={reply} label="Copy" toastLabel="Reply copied" />
+            </div>
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-forest-900">
+              {reply}
+            </p>
+          </div>
+        );
+      })()}
 
       {/* Actions */}
       <div
