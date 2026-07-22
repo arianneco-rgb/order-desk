@@ -129,6 +129,8 @@ export interface Order {
   status: OrderStatus;
   needsReview: boolean;
   reviewReasons: string[];
+  /** Quiet, non-blocking annotations (routine conversions, pack splits). */
+  softNotes?: string[];
   shopifyDraftId?: string;
   shopifyDraftName?: string;
   shopifyDraftUrl?: string;

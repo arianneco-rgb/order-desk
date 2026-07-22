@@ -187,6 +187,15 @@ export function OrderCard({
         </div>
       )}
 
+      {/* Soft notes: routine reads/conversions — informational, not a flag */}
+      {order.softNotes && order.softNotes.length > 0 && (
+        <ul className="mt-2 list-inside list-disc space-y-0.5 text-xs text-forest-500">
+          {order.softNotes.map((note, i) => (
+            <li key={i}>{note}</li>
+          ))}
+        </ul>
+      )}
+
       {/* Line items with per-line amounts */}
       {editing ? (
         <div className="mt-3" onClick={(e) => e.stopPropagation()}>

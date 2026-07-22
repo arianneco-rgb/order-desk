@@ -45,11 +45,11 @@ export async function tick(): Promise<void> {
 
 export async function processOrder(order: Order): Promise<Order> {
   const catalog = await getCatalog();
-  const { items, reasons } = parseMessage(order.rawMessage, catalog);
+  const { items, reasons, softNotes } = parseMessage(order.rawMessage, catalog);
   order.items = items;
   reasons.push(...(await duplicateReasons(order)));
   await applyCustomerDefaults(order);
-  await repriceOrder(order, reasons);
+  await repriceOrder(order, reasons, softNotes);
   order.status = "processed";
   order.processedAt = new Date().toISOString();
   await saveOrder(order);
@@ -117,7 +117,8 @@ async function duplicateReasons(order: Order): Promise<string[]> {
  */
 export async function repriceOrder(
   order: Order,
-  parserReasons?: string[]
+  parserReasons?: string[],
+  parserSoftNotes?: string[]
 ): Promise<Order> {
   const catalog = await getCatalog();
   const priced = priceItems(order.items, catalog);
@@ -134,9 +135,10 @@ export async function repriceOrder(
   order.total = totals.total;
   order.reply = totalOrderReply(order.total, itemsText(priced) || "your order");
 
-  const reasons = [...(parserReasons ?? []), ...pricingReviewReasons(priced)];
-  order.reviewReasons = reasons;
-  order.needsReview = reasons.length > 0;
+  const pr = pricingReviewReasons(priced);
+  order.reviewReasons = [...(parserReasons ?? []), ...pr.reasons];
+  order.softNotes = [...(parserSoftNotes ?? []), ...pr.softNotes];
+  order.needsReview = order.reviewReasons.length > 0;
   await saveOrder(order);
   return order;
 }

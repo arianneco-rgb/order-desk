@@ -7,12 +7,14 @@
 // is flagged "Needs review" instead of silently guessing.
 
 import type { CatalogProduct, ItemForm, OrderItem } from "./types";
-import { POUCHES_PER_KG, gramsToPouches } from "./conversions";
+import { POUCHES_PER_KG, gramsToPouches, plural } from "./conversions";
 
 export interface ParseResult {
   items: OrderItem[];
-  /** Human-readable reasons the order needs Joey's attention. */
+  /** HARD reasons — genuine ambiguity that routes the order to "Needs review". */
   reasons: string[];
+  /** SOFT notes — routine reads (bare→pouch, box→case) shown quietly, never flagged. */
+  softNotes: string[];
 }
 
 const TAGALOG_NUMBERS: Record<string, number> = {
@@ -32,6 +34,8 @@ interface QtyMatch {
   samples?: number;
   confidence: number;
   matched: boolean;
+  /** Read from a bare number with no unit (spec: bare → pouch) — soft-noted. */
+  bare?: boolean;
 }
 
 function parseNumberWord(word: string): number | null {
@@ -122,12 +126,14 @@ function extractQty(segment: string): QtyMatch {
     }
   }
 
-  // Bare number ("2 kasane" / "kasane 2") — assume pouches, low confidence.
+  // Bare number ("2 kasane" / "kasane 2") — spec rule: bare → pouches. This
+  // is an accepted conversion, not an uncertain guess, so it's confident
+  // (a soft note is surfaced instead of a review flag).
   m = segment.match(/(?:^|\s)(\d+)(?:\s|$)/);
   if (m) {
     const n = Number(m[1]);
     if (n > 0 && n <= 200) {
-      return { pouches: n, confidence: 0.5, matched: true };
+      return { pouches: n, confidence: 0.85, matched: true, bare: true };
     }
   }
 
@@ -220,6 +226,7 @@ export function parseMessage(
   catalog: CatalogProduct[]
 ): ParseResult {
   const reasons: string[] = [];
+  const softNotes: string[] = [];
   const items: OrderItem[] = [];
   const segments = segmentMessage(message);
 
@@ -267,6 +274,13 @@ export function parseMessage(
       pendingQty = null;
     }
 
+    // Soft annotations (spec Stage 4): routine conversions, shown not flagged.
+    if (qty.bare && pouches > 0) {
+      softNotes.push(`${product.title}: read "${qty.pouches}" as ${plural(qty.pouches ?? 0, "pouch")}.`);
+    } else if (/\bbox(?:es)?\b/.test(segment) && pouches > 0) {
+      softNotes.push(`${product.title}: read "box" as case.`);
+    }
+
     if (pouches > 0) upsert(items, product.key, "pouch", pouches, confidence);
     if (samples > 0) upsert(items, product.key, "sample", samples, confidence);
   }
@@ -289,7 +303,7 @@ export function parseMessage(
     }
   }
 
-  return { items, reasons };
+  return { items, reasons, softNotes };
 }
 
 function upsert(

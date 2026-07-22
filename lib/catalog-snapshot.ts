@@ -32,7 +32,9 @@ export const CATALOG_SNAPSHOT: CatalogProduct[] = [
   {
     key: "shiori",
     title: "Shiori",
-    aliases: ["shiori"],
+    // Legacy numbered names are still heavily used in real messages
+    // (266 uses of "#1" in the export): Matcha #1 / No.1 = Shiori.
+    aliases: ["shiori", "matcha #1", "matcha#1", "#1", "no.1", "no. 1", "no 1", "number 1", "matcha no.1", "matcha no. 1"],
     productId: "gid://shopify/Product/8693015937277",
     pouch: { variantId: "gid://shopify/ProductVariant/45605456281853", sku: "WHO-SHR-0200", price: 1850, title: "200g" },
     case: { variantId: "gid://shopify/ProductVariant/45605456314621", sku: "WHC-SHR-0200", price: 18000, title: "Case (10 x 200g)" },
@@ -51,7 +53,8 @@ export const CATALOG_SNAPSHOT: CatalogProduct[] = [
   {
     key: "shizu",
     title: "Shizu",
-    aliases: ["shizu"],
+    // Legacy: Matcha #3 / No.3 = Shizu.
+    aliases: ["shizu", "matcha #3", "matcha#3", "#3", "no.3", "no. 3", "no 3", "number 3", "matcha no.3", "matcha no. 3"],
     productId: "gid://shopify/Product/8894318936317",
     pouch: { variantId: "gid://shopify/ProductVariant/46477931380989", sku: "WHO-SHZ-0200", price: 1300, title: "200g" },
     case: { variantId: "gid://shopify/ProductVariant/46477931348221", sku: "WHC-SHZ-0200", price: 12500, title: "Case (10 x 200g)" },
@@ -60,7 +63,8 @@ export const CATALOG_SNAPSHOT: CatalogProduct[] = [
   {
     key: "miyo",
     title: "Miyo",
-    aliases: ["miyo"],
+    // Legacy: Matcha #2 / No.2 = Miyo.
+    aliases: ["miyo", "matcha #2", "matcha#2", "#2", "no.2", "no. 2", "no 2", "number 2", "matcha no.2", "matcha no. 2"],
     productId: "gid://shopify/Product/8960209748221",
     pouch: { variantId: "gid://shopify/ProductVariant/46599187824893", sku: "WHO-KSH-0200", price: 1550, title: "200g" },
     case: { variantId: "gid://shopify/ProductVariant/46599187857661", sku: "WHC-KSH-0200", price: 15000, title: "Case (10 x 200g)" },

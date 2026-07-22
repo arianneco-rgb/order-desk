@@ -149,11 +149,18 @@ export function itemsText(priced: PricedItem[]): string {
 }
 
 /**
- * Review checks that depend on prices/quantities (parser reasons come
- * separately): below-MOQ and any pricing warnings.
+ * Two-tier pricing checks (spec Stage 4): HARD reasons route to "Needs
+ * review" (below-MOQ, unknown product, missing variant, price anomalies);
+ * SOFT notes flow through as quiet summary annotations (the case+pouch
+ * breakdown of each line, so a "13 pouches → 1 case + 3 pouches" split is
+ * visible without flagging the order).
  */
-export function pricingReviewReasons(priced: PricedItem[]): string[] {
+export function pricingReviewReasons(priced: PricedItem[]): {
+  reasons: string[];
+  softNotes: string[];
+} {
   const reasons: string[] = [];
+  const softNotes: string[] = [];
   const totalPouches = priced
     .filter((l) => l.form === "pouch")
     .reduce((sum, l) => sum + l.qty, 0);
@@ -165,7 +172,13 @@ export function pricingReviewReasons(priced: PricedItem[]): string[] {
   }
 
   for (const line of priced) {
-    reasons.push(...line.warnings);
+    reasons.push(...line.warnings); // unknown product / missing variant / price anomaly = hard
+    // Soft: surface the pack split when a case+pouch decomposition happened.
+    if (line.form === "pouch" && line.cases > 0 && line.loosePouches > 0) {
+      softNotes.push(
+        `${line.title}: ${line.qty} pouches → ${line.cases} case${line.cases === 1 ? "" : "s"} + ${line.loosePouches} pouch${line.loosePouches === 1 ? "" : "es"}`
+      );
+    }
   }
-  return reasons;
+  return { reasons, softNotes };
 }
