@@ -22,7 +22,6 @@ import { CATALOG_SNAPSHOT } from "./catalog-snapshot";
 import { CUSTOMERS_SNAPSHOT } from "./customers-snapshot";
 import { joinNaturally, plural } from "./conversions";
 import { DELIVERY_METHODS } from "./delivery";
-import { VAT_RATE } from "./pricing";
 import { addRuntimeCustomer, getTestMode, historyRows, nextId, runtimeCustomers } from "./store";
 import type {
   CafeCustomer,
@@ -811,42 +810,31 @@ export interface DraftResult {
  * calculateDraft() (preview/reprice) and createDraftOrder(), so the total
  * Joey sends the cafe is exactly what the created draft will say.
  *
- * `vatAmount` > 0 adds the explicit "VAT (12%)" custom line. The store has
- * no PH tax registration configured (verified 2026-07-07: taxExempt:false +
- * PH address still calculates ₱0 tax), and enabling one store-wide would
- * change RETAIL checkout too — so VAT is a visible line item instead of
- * Shopify's tax engine. If the store ever configures PH taxes properly,
- * swap this for `taxExempt: !order.options.chargeVat`.
+ * VAT is Shopify's OWN tax engine, gated by `taxExempt: !chargeVat` — NOT a
+ * custom line item. It used to be a manual "VAT (12%)" line because the
+ * store had no PH tax registration and `taxExempt:false` calculated ₱0
+ * (verified 2026-07-07). The store's tax registration is active now, so
+ * that workaround double-charged VAT (the manual line PLUS Shopify's own
+ * automatic tax, both landing on the draft — see the "Estimated tax" row
+ * stacking on top of a "VAT (12%)" product line, caught 2026-07-23). Toggling
+ * the tickbox now toggles `taxExempt` directly, so VAT shows exactly once,
+ * under Payment, the same way every other Shopify order shows tax.
  */
 function buildDraftOrderInput(
   order: Order,
-  lineItems: DraftLineItem[],
-  vatAmount: number
+  lineItems: DraftLineItem[]
 ): Record<string, unknown> {
   const opts = order.options;
   const delivery = opts.deliveryMethod ? DELIVERY_METHODS[opts.deliveryMethod] : null;
 
   return {
-    lineItems: [
-      ...lineItems.map((l) => ({
-        variantId: l.variantId,
-        quantity: l.quantity,
-        ...(opts.freeSamples && l.isSample
-          ? { appliedDiscount: { value: 100, valueType: "PERCENTAGE", title: "Free samples" } }
-          : {}),
-      })),
-      ...(vatAmount > 0
-        ? [
-            {
-              title: "VAT (12%)",
-              originalUnitPrice: vatAmount,
-              quantity: 1,
-              requiresShipping: false,
-              taxable: false,
-            },
-          ]
-        : []),
-    ],
+    lineItems: lineItems.map((l) => ({
+      variantId: l.variantId,
+      quantity: l.quantity,
+      ...(opts.freeSamples && l.isSample
+        ? { appliedDiscount: { value: 100, valueType: "PERCENTAGE", title: "Free samples" } }
+        : {}),
+    })),
     ...(order.customerId && !order.customerId.startsWith("mock:")
       ? { purchasingEntity: { customerId: order.customerId } }
       : {}),
@@ -857,11 +845,9 @@ function buildDraftOrderInput(
       ...(delivery ? [`Delivery: ${delivery.label}`] : []),
     ],
     useCustomerDefaultAddress: true,
-    // ALWAYS tax-exempt: the tickbox's explicit VAT line is the ONLY tax on
-    // a draft. Without this, Shopify's own PH registration adds 12% whenever
-    // the customer isn't tax-exempt (or no customer is attached) — observed
-    // live 2026-07-08 — which would stack on top of our VAT line.
-    taxExempt: true,
+    // The VAT tickbox IS the tax-exempt flag — Joey's choice always
+    // overrides the customer's own default tax setting for this draft.
+    taxExempt: !opts.chargeVat,
     acceptAutomaticDiscounts: opts.applyEligibleDiscounts,
     ...(opts.manualDiscount && opts.manualDiscount.value > 0
       ? {
@@ -882,6 +868,7 @@ interface CalculatedMoney {
   subtotalPriceSet: { shopMoney: { amount: string } };
   totalDiscountsSet: { shopMoney: { amount: string } };
   totalShippingPriceSet: { shopMoney: { amount: string } };
+  totalTaxSet: { shopMoney: { amount: string } };
   totalPriceSet: { shopMoney: { amount: string } };
 }
 
@@ -898,6 +885,7 @@ async function draftOrderCalculate(input: Record<string, unknown>): Promise<Calc
           subtotalPriceSet { shopMoney { amount } }
           totalDiscountsSet { shopMoney { amount } }
           totalShippingPriceSet { shopMoney { amount } }
+          totalTaxSet { shopMoney { amount } }
           totalPriceSet { shopMoney { amount } }
         }
         userErrors { field message }
@@ -918,59 +906,35 @@ const money = (set: { shopMoney: { amount: string } }): number =>
 
 /**
  * Shopify's own math for this order (persists NOTHING — safe in test mode):
- * automatic discounts, manual discount, free samples, delivery fee, and the
- * VAT line. Two passes when VAT is on: first to learn the discounted goods
- * total the 12% applies to, second including the VAT line for the final
- * total (so any automatic-discount interaction is visible, not guessed).
+ * automatic discounts, manual discount, free samples, delivery fee, and
+ * VAT — all read straight back from Shopify's own calculation (`taxExempt`
+ * on the input already decided whether VAT applies, so one call is enough;
+ * no more building a VAT line item, so no need for the old two-pass dance).
  */
 export async function calculateDraft(
   order: Order,
   lineItems: DraftLineItem[]
 ): Promise<DraftTotals> {
-  const base = await draftOrderCalculate(buildDraftOrderInput(order, lineItems, 0));
+  const calc = await draftOrderCalculate(buildDraftOrderInput(order, lineItems));
   // Shopify's subtotalPrice is ALREADY NET of line + order discounts
-  // (verified against the live store 2026-07-08) — it IS the VAT base. The
-  // UI shows gross goods then −discounts, so report subtotal as net+disc.
-  const netGoods = money(base.subtotalPriceSet);
-  const discounts = money(base.totalDiscountsSet);
+  // (verified against the live store 2026-07-08). The UI shows gross goods
+  // then −discounts, so report subtotal as net+discounts.
+  const netGoods = money(calc.subtotalPriceSet);
+  const discounts = money(calc.totalDiscountsSet);
   const grossGoods = Math.round((netGoods + discounts) * 100) / 100;
 
-  if (!order.options.chargeVat) {
-    return {
-      subtotal: grossGoods,
-      discounts,
-      vat: 0,
-      shipping: money(base.totalShippingPriceSet),
-      total: money(base.totalPriceSet),
-    };
-  }
-
-  const vat = Math.round(Math.max(netGoods, 0) * VAT_RATE * 100) / 100;
-  if (vat <= 0) {
-    return {
-      subtotal: grossGoods,
-      discounts,
-      vat: 0,
-      shipping: money(base.totalShippingPriceSet),
-      total: money(base.totalPriceSet),
-    };
-  }
-
-  const final = await draftOrderCalculate(buildDraftOrderInput(order, lineItems, vat));
   return {
     subtotal: grossGoods,
     discounts,
-    vat,
-    shipping: money(final.totalShippingPriceSet),
-    total: money(final.totalPriceSet),
+    vat: money(calc.totalTaxSet),
+    shipping: money(calc.totalShippingPriceSet),
+    total: money(calc.totalPriceSet),
   };
 }
 
 export async function createDraftOrder(
   order: Order,
-  lineItems: DraftLineItem[],
-  /** The VAT line amount — pass order.totals?.vat (kept fresh by reprice). */
-  vatAmount: number
+  lineItems: DraftLineItem[]
 ): Promise<DraftResult> {
   // Test-mode orders still price against real Shopify data (getCatalog,
   // getCafeCustomers, calculateDraft) — only the WRITE is faked, same mock:
@@ -998,7 +962,7 @@ export async function createDraftOrder(
         userErrors { field message }
       }
     }`,
-    { input: buildDraftOrderInput(order, lineItems, order.options.chargeVat ? vatAmount : 0) }
+    { input: buildDraftOrderInput(order, lineItems) }
   );
   const errs = data.draftOrderCreate.userErrors;
   if (errs.length || !data.draftOrderCreate.draftOrder) {

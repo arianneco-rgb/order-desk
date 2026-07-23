@@ -79,7 +79,7 @@ function lineKg(li: { sku: string; variantTitle: string; quantity: number }): nu
   if (v.includes("case")) return li.quantity * 2;
   if (/\b1\s*kg\b/.test(v)) return li.quantity * 1;
   if (/\b200\s*g\b/.test(v)) return li.quantity * 0.2;
-  return 0; // custom lines (e.g. the VAT line) carry no weight
+  return 0; // custom lines carry no weight (old paid orders may still have a manual "VAT (12%)" line from before VAT became Shopify tax)
 }
 
 function lineSamples(li: { sku: string; quantity: number }): number {

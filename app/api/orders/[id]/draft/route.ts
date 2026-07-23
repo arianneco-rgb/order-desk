@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCatalog, buildDraftLineItems, createDraftOrder } from "@/lib/shopify";
-import { localDraftTotals, priceItems } from "@/lib/pricing";
+import { priceItems } from "@/lib/pricing";
 import { getOrder, recordSampleCredit, saveOrder, tryLockOrder, unlockOrder } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
@@ -38,10 +38,7 @@ export async function POST(
     const catalog = await getCatalog();
     const priced = priceItems(order.items, catalog);
     const lineItems = buildDraftLineItems(priced, catalog);
-    // VAT line amount: order.totals is refreshed by every reprice (items or
-    // options change), so it's current; local math is the safety net.
-    const vat = order.totals?.vat ?? localDraftTotals(priced, order.options).vat;
-    const draft = await createDraftOrder(order, lineItems, vat);
+    const draft = await createDraftOrder(order, lineItems);
 
     order.shopifyDraftId = draft.draftId;
     order.shopifyDraftName = draft.draftName;

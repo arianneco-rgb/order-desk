@@ -395,7 +395,7 @@ export function OrderCard({
                 {formatPeso(order.options.deliveryFee ?? 0)}) — tagged for packing.
               </li>
             )}
-            {order.options.chargeVat && <li>· VAT (12%) added as a line on the draft.</li>}
+            {order.options.chargeVat && <li>· VAT (12%) added as Shopify tax on the draft.</li>}
             {order.options.freeSamples && <li>· Sample lines carry a 100% discount.</li>}
           </ul>
 

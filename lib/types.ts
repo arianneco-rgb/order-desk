@@ -95,9 +95,10 @@ export interface DraftOptions {
   applyEligibleDiscounts: boolean;
   manualDiscount?: ManualDiscount;
   /**
-   * Adds an explicit "VAT (12%)" line to the draft (12% of the discounted
-   * goods total). NOT Shopify's tax engine — the store has no PH tax
-   * registration configured, and enabling one would change retail checkout.
+   * Toggles Shopify's own tax engine for this draft (`taxExempt: !chargeVat`
+   * — see lib/shopify.ts buildDraftOrderInput). VAT shows under the
+   * draft's Payment section as Shopify's native "Estimated tax", same as
+   * any other order — not a custom line item.
    */
   chargeVat: boolean;
   deliveryMethod?: DeliveryMethod;
