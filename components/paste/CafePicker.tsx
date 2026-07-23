@@ -40,6 +40,7 @@ export function CafePicker({
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [address1, setAddress1] = useState("");
+  const [address2, setAddress2] = useState("");
   const [city, setCity] = useState("");
   const [province, setProvince] = useState("");
   const [zip, setZip] = useState("");
@@ -110,6 +111,7 @@ export function CafePicker({
     setEmail("");
     setPhone("");
     setAddress1("");
+    setAddress2("");
     setCity("");
     setProvince("");
     setZip("");
@@ -140,6 +142,7 @@ export function CafePicker({
     if (parsed.email && !touched.has("email")) setEmail(parsed.email);
     if (parsed.phone && !touched.has("phone")) setPhone(parsed.phone);
     if (parsed.address1 && !touched.has("address1")) setAddress1(parsed.address1);
+    if (parsed.address2 && !touched.has("address2")) setAddress2(parsed.address2);
     if (parsed.city && !touched.has("city")) setCity(parsed.city);
     if (parsed.province && !touched.has("province")) setProvince(parsed.province);
     if (parsed.zip && !touched.has("zip")) setZip(parsed.zip);
@@ -186,9 +189,10 @@ export function CafePicker({
           email: email.trim() || undefined,
           phone: phone.trim() || undefined,
           address:
-            address1.trim() || city.trim() || province.trim() || zip.trim()
+            address1.trim() || address2.trim() || city.trim() || province.trim() || zip.trim()
               ? {
                   address1: address1.trim() || undefined,
+                  address2: address2.trim() || undefined,
                   city: city.trim() || undefined,
                   province: province.trim() || undefined,
                   zip: zip.trim() || undefined,
@@ -390,12 +394,22 @@ export function CafePicker({
                 />
               </label>
               <label className="block text-sm font-medium text-forest-900 sm:col-span-2">
-                Delivery address
+                Street address
                 <input
                   type="text"
                   value={address1}
                   onChange={(e) => touch("address1", setAddress1)(e.target.value)}
-                  placeholder="Street, barangay… (optional)"
+                  placeholder="House/building no. + street (optional)"
+                  className={clsx(inputClass, "mt-1 font-normal")}
+                />
+              </label>
+              <label className="block text-sm font-medium text-forest-900 sm:col-span-2">
+                Barangay / subdivision / landmark
+                <input
+                  type="text"
+                  value={address2}
+                  onChange={(e) => touch("address2", setAddress2)(e.target.value)}
+                  placeholder="e.g. Brgy. Poblacion (optional)"
                   className={clsx(inputClass, "mt-1 font-normal")}
                 />
               </label>

@@ -16,6 +16,7 @@ type FieldKey =
   | "email"
   | "cafeName"
   | "address1"
+  | "address2"
   | "city"
   | "province"
   | "zip";
@@ -59,6 +60,7 @@ export function NewCustomerPanel({
   const [cafeName, setCafeName] = useState("");
   const [noCafe, setNoCafe] = useState(false);
   const [address1, setAddress1] = useState("");
+  const [address2, setAddress2] = useState("");
   const [city, setCity] = useState("");
   const [province, setProvince] = useState("");
   const [zip, setZip] = useState("");
@@ -75,6 +77,7 @@ export function NewCustomerPanel({
     email: setEmail,
     cafeName: setCafeName,
     address1: setAddress1,
+    address2: setAddress2,
     city: setCity,
     province: setProvince,
     zip: setZip,
@@ -100,6 +103,7 @@ export function NewCustomerPanel({
     if (p.email && !t.has("email")) setEmail(p.email);
     if (p.cafeName && !t.has("cafeName")) setCafeName(p.cafeName);
     if (p.address1 && !t.has("address1")) setAddress1(p.address1);
+    if (p.address2 && !t.has("address2")) setAddress2(p.address2);
     if (p.city && !t.has("city")) setCity(p.city);
     if (p.province && !t.has("province")) setProvince(p.province);
     if (p.zip && !t.has("zip")) setZip(p.zip);
@@ -112,7 +116,7 @@ export function NewCustomerPanel({
     if (!firstName.trim()) list.push("First name");
     if (!phone.trim()) list.push("Contact number");
     if (cafeRequired && !cafeName.trim()) list.push("Cafe/Company");
-    if (!address1.trim()) list.push("Delivery address");
+    if (!address1.trim()) list.push("Street address");
     return list;
   }, [firstName, phone, cafeRequired, cafeName, address1]);
 
@@ -146,6 +150,7 @@ export function NewCustomerPanel({
           phone: phone.trim() || undefined,
           address: {
             address1: address1.trim() || undefined,
+            address2: address2.trim() || undefined,
             city: city.trim() || undefined,
             province: province.trim() || undefined,
             zip: zip.trim() || undefined,
@@ -253,9 +258,20 @@ export function NewCustomerPanel({
           </div>
           <label className="block text-sm font-medium text-forest-900 sm:col-span-2">
             <span className="flex items-center gap-1.5">
-              Delivery address (street + barangay) <FieldBadge filled={!!address1.trim()} required />
+              Street address <FieldBadge filled={!!address1.trim()} required />
             </span>
-            <input type="text" value={address1} onChange={(e) => touch("address1")(e.target.value)} className={clsx(inputClass, "mt-1 font-normal")} />
+            <input type="text" value={address1} onChange={(e) => touch("address1")(e.target.value)} placeholder="House/building no. + street" className={clsx(inputClass, "mt-1 font-normal")} />
+            <span className="mt-0.5 block text-[11px] font-normal text-forest-500">
+              Keep this to just the street — Shopify treats it as one field, and
+              a longer blob (barangay/city crammed in too) is more likely to get
+              auto-corrected to the nearest match instead of saved as typed.
+            </span>
+          </label>
+          <label className="block text-sm font-medium text-forest-900 sm:col-span-2">
+            <span className="flex items-center gap-1.5">
+              Barangay / subdivision / landmark <FieldBadge filled={!!address2.trim()} required={false} />
+            </span>
+            <input type="text" value={address2} onChange={(e) => touch("address2")(e.target.value)} placeholder="e.g. Brgy. Poblacion, near the market" className={clsx(inputClass, "mt-1 font-normal")} />
           </label>
           <label className="block text-sm font-medium text-forest-900">
             <span className="flex items-center gap-1.5">

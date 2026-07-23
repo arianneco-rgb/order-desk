@@ -23,7 +23,10 @@ export interface ParsedProfile {
   cafeName?: string;
   phone?: string;
   email?: string;
+  /** Street/building only — see splitAddress() below. */
   address1?: string;
+  /** Barangay/subdivision/landmark — split OUT of address1, never left crammed in. */
+  address2?: string;
   /** Derived from the address via lib/ph-locations.ts when recognisable. */
   city?: string;
   province?: string;
@@ -52,6 +55,7 @@ const PH_MOBILE = /(\+?63|0)\s?9\d{2}[\s.-]?\d{3}[\s.-]?\d{4}\b/;
 const EMAIL = /\b[\w.+-]+@[\w-]+\.[\w.]+\b/;
 const ADDRESS_HINTS =
   /\b(st\.?|street|ave\.?|avenue|blvd|road|rd\.?|brgy\.?|barangay|village|subd|subdivision|unit|bldg|building|blk|block|lot|floor|city|tower|purok|sitio|highway|hiway|#\d)\b/i;
+const BARANGAY_HINTS = /\b(brgy\.?|barangay|purok|sitio|subd\.?|subdivision|village)\b/i;
 const CAFE_HINTS = /\b(cafe|caf[eé]|coffee|kape|matcha|bake|brew|kitchen|restaurant|bar|roast|espresso|bakery|deli|opc|corp|inc)\b/i;
 // The team's own request message, if pasted along with the reply — drop it.
 const REQUEST_NOISE = /may i ask|customer profile|thank you/i;
@@ -84,6 +88,43 @@ export function splitName(full: string): { firstName: string; lastName: string }
   return {
     firstName: parts.slice(0, splitAt).join(" "),
     lastName: parts.slice(splitAt).join(" "),
+  };
+}
+
+/**
+ * Split a raw address block into street-level text (address1) and
+ * barangay/subdivision/landmark text (address2), pulling out any comma
+ * segment that's basically just the city name (captured separately as
+ * cityText instead of left duplicated in the field text).
+ *
+ * Shopify's address widget treats address1 as JUST the street — cramming
+ * street + barangay + city into one field reads as malformed free text and
+ * risks being auto-"corrected" to the nearest guess instead of respected
+ * as typed. Conservative: only splits on clear comma boundaries; a
+ * single-segment address (no commas) is left alone rather than guessed at.
+ */
+function splitAddress(raw: string): { address1: string; address2?: string; cityText?: string } {
+  const segments = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  if (segments.length <= 1) return { address1: raw.trim() };
+
+  const streetParts: string[] = [];
+  const barangayParts: string[] = [];
+  let cityText: string | undefined;
+
+  for (const seg of segments) {
+    const loc = !cityText ? findPhLocation(seg) : undefined;
+    if (loc && seg.length <= loc.city.length + 15 && !BARANGAY_HINTS.test(seg)) {
+      cityText = seg;
+      continue;
+    }
+    if (BARANGAY_HINTS.test(seg)) barangayParts.push(seg);
+    else streetParts.push(seg);
+  }
+
+  return {
+    address1: (streetParts.join(", ") || segments[0]).trim(),
+    address2: barangayParts.length ? barangayParts.join(", ") : undefined,
+    cityText,
   };
 }
 
@@ -174,14 +215,27 @@ export function parseProfileMessage(message: string): ParsedProfile {
       const zips = out.address1.match(/\b\d{4}\b/g);
       if (zips) out.zip = zips[zips.length - 1];
     }
+
+    const split = splitAddress(out.address1);
+    const stripZip = (s: string) =>
+      (out.zip ? s.replace(new RegExp(`\\b${out.zip}\\b`), "") : s)
+        .replace(/[,\s]+$/, "")
+        .trim();
+
     if (!out.city) {
-      const loc = findPhLocation(out.address1);
+      const loc = findPhLocation(split.cityText ?? out.address1);
       if (loc) {
         out.city = loc.city;
         if (!out.province) out.province = loc.province;
       }
     } else if (!out.province) {
       out.province = findPhLocation(out.city)?.province;
+    }
+
+    out.address1 = stripZip(split.address1) || out.address1;
+    if (split.address2) {
+      const address2 = stripZip(split.address2);
+      if (address2) out.address2 = address2;
     }
   }
   if (out.phone) out.phone = normalizePhone(out.phone);
