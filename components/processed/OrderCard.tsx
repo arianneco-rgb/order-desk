@@ -10,6 +10,7 @@ import { CopyButton } from "@/components/CopyButton";
 import { StatusPill } from "@/components/StatusPill";
 import { TestBadge } from "@/components/TestBadge";
 import { Modal } from "@/components/Modal";
+import { useToast } from "@/components/Toast";
 import { DELIVERY_METHODS } from "@/lib/delivery";
 import { DraftOptionsPanel } from "./DraftOptionsPanel";
 import { LineItemEditor } from "./LineItemEditor";
@@ -87,6 +88,7 @@ export function OrderCard({
   selected,
   onSelect,
   onOrderUpdate,
+  onOrderDeleted,
 }: {
   order: Order;
   catalog: CatalogProduct[];
@@ -94,12 +96,18 @@ export function OrderCard({
   selected: boolean;
   onSelect: (id: string) => void;
   onOrderUpdate: (order: Order) => void;
+  /** Called after the order is confirmed deleted, so the parent list can drop it immediately. */
+  onOrderDeleted?: (id: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draftBusy, setDraftBusy] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [draftNotice, setDraftNotice] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const toast = useToast();
 
   function openPreview(e: React.MouseEvent) {
     e.stopPropagation();
@@ -122,6 +130,25 @@ export function OrderCard({
       setDraftError(err instanceof Error ? err.message : "Draft creation failed.");
     } finally {
       setDraftBusy(false);
+    }
+  }
+
+  async function confirmDelete() {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/orders/${order.id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Delete failed (HTTP ${res.status}).`);
+      setDeleteOpen(false);
+      toast(`Deleted ${order.company}'s order.`, "success");
+      onOrderDeleted?.(order.id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Couldn't delete this order.";
+      setDeleteError(message);
+      toast(message, "error");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -289,6 +316,16 @@ export function OrderCard({
             {draftBusy ? "Creating draft…" : "Confirm · create draft"}
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => {
+            setDeleteError(null);
+            setDeleteOpen(true);
+          }}
+          className="ml-auto rounded-md border border-red-200 bg-white px-3 py-1.5 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50"
+        >
+          Delete
+        </button>
       </div>
       {draftNotice && !draftError && (
         <p className="mt-2 text-xs font-medium text-forest-700">{draftNotice}</p>
@@ -380,6 +417,37 @@ export function OrderCard({
               className="rounded-md bg-forest-700 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-forest-800 disabled:opacity-50"
             >
               {draftBusy ? "Creating draft…" : "Confirm · create draft"}
+            </button>
+          </div>
+        </Modal>
+
+        <Modal open={deleteOpen} onClose={() => setDeleteOpen(false)} title="Delete this order?">
+          <p className="text-sm text-forest-700">
+            This permanently deletes{" "}
+            <span className="font-semibold text-forest-900">{order.company}</span>&apos;s order
+            from Order Desk
+            {order.shopifyDraftId && !order.shopifyDraftId.startsWith("mock:")
+              ? `, removes its Shopify draft${order.shopifyDraftName ? ` (${order.shopifyDraftName})` : ""},`
+              : ","}{" "}
+            and clears any Sheet record. This can&apos;t be undone.
+          </p>
+          {deleteError && <p className="mt-3 text-sm text-red-600">{deleteError}</p>}
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setDeleteOpen(false)}
+              disabled={deleting}
+              className="rounded-md border border-forest-300 bg-white px-3 py-1.5 text-sm font-semibold text-forest-800 transition-colors hover:bg-forest-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void confirmDelete()}
+              disabled={deleting}
+              className="rounded-md bg-red-700 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-red-800 disabled:opacity-50"
+            >
+              {deleting ? "Deleting…" : "Delete permanently"}
             </button>
           </div>
         </Modal>

@@ -1028,3 +1028,32 @@ export async function completeDraftAsPaid(order: Order): Promise<{ orderId: stri
   }
   return { orderId: completed.id };
 }
+
+/**
+ * Permanently delete a (not-yet-paid) draft order in Shopify — used when
+ * Joey deletes an order from the app. Never called on a completed/paid
+ * order, only on drafts still awaiting payment, so this is reversible in
+ * the sense that no real transaction is ever destroyed.
+ */
+export async function deleteDraftOrder(draftId: string): Promise<void> {
+  if (shopifyMode() === "snapshot" || draftId.startsWith("mock:")) return;
+
+  const data = await adminGraphQL<{
+    draftOrderDelete: {
+      deletedId: string | null;
+      userErrors: { field: string[] | null; message: string }[];
+    };
+  }>(
+    `mutation($input: DraftOrderDeleteInput!) {
+      draftOrderDelete(input: $input) {
+        deletedId
+        userErrors { field message }
+      }
+    }`,
+    { input: { id: draftId } }
+  );
+  const errs = data.draftOrderDelete.userErrors;
+  if (errs.length) {
+    throw new Error(`draftOrderDelete failed: ${errs.map((e) => e.message).join("; ") || "unknown"}`);
+  }
+}

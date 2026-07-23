@@ -58,6 +58,8 @@ function handle(e) {
         return json(appendHistoryRow(body.row || {}));
       case 'setHistoryNote':
         return json(setHistoryNote(body.orderId, body.note));
+      case 'deleteHistoryRow':
+        return json(deleteHistoryRow(body.orderId));
       case 'searchBpi':
         return json({ emails: searchBpi(body.query) });
       default:
@@ -169,6 +171,18 @@ function setHistoryNote(orderId, note) {
   for (let i = 1; i < values.length; i++) {
     if (values[i][4] === orderId) {
       sheet.getRange(i + 1, 8).setValue(note);
+      return { ok: true };
+    }
+  }
+  return { ok: false };
+}
+
+function deleteHistoryRow(orderId) {
+  const sheet = getSheet(HISTORY_TAB);
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    if (values[i][4] === orderId) {
+      sheet.deleteRow(i + 1);
       return { ok: true };
     }
   }

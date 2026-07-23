@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { tick, updateItems } from "@/lib/pipeline";
-import { getOrder, saveOrder } from "@/lib/store";
+import { deleteOrder, getOrder, saveOrder, tryLockOrder, unlockOrder } from "@/lib/store";
+import { deleteDraftOrder } from "@/lib/shopify";
+import { deleteOrderHistory } from "@/lib/sheets";
 import type { OrderItem } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -70,4 +72,64 @@ export async function PATCH(
     await saveOrder(updated);
   }
   return NextResponse.json({ order: updated });
+}
+
+/**
+ * Permanently delete an order — Queue/Processed "Delete" action. Removes any
+ * Shopify draft, any (rare — orders here are never-paid) Sheet history row,
+ * then the order itself. Never allowed on a paid order: that's the
+ * permanent record, and deleting it here would leave a completed Shopify
+ * order with no trace in the app.
+ */
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  if (!(await tryLockOrder(params.id))) {
+    return NextResponse.json(
+      { error: "This order is mid-update — try again in a moment." },
+      { status: 409 }
+    );
+  }
+  try {
+    const order = await getOrder(params.id);
+    if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
+    if (order.status === "paid") {
+      return NextResponse.json(
+        { error: "Paid orders are the permanent record — they can't be deleted here." },
+        { status: 409 }
+      );
+    }
+
+    if (order.shopifyDraftId) {
+      try {
+        await deleteDraftOrder(order.shopifyDraftId);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : "Couldn't remove the Shopify draft.";
+        return NextResponse.json(
+          { error: `${reason} — nothing was deleted, so try again (or remove the draft in Shopify Admin first).` },
+          { status: 502 }
+        );
+      }
+    }
+
+    try {
+      await deleteOrderHistory(order.id);
+    } catch (err) {
+      // Non-fatal: this only ever matters for an order that somehow already
+      // had a history row, which shouldn't happen for anything reachable
+      // from Queue/Processed. Proceed with the (authoritative) store delete.
+      console.error("Sheet history delete failed:", err);
+    }
+
+    await deleteOrder(order.id);
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Delete failed." },
+      { status: 502 }
+    );
+  } finally {
+    await unlockOrder(params.id);
+  }
 }

@@ -170,6 +170,17 @@ export async function saveOrder(order: Order): Promise<void> {
   if (error) throw new Error(`Supabase order save failed: ${error.message}`);
 }
 
+/** Permanently remove an order — Queue/Processed "Delete" action. Never used on paid orders. */
+export async function deleteOrder(id: string): Promise<void> {
+  if (!isLive()) {
+    mem().orders.delete(id);
+    mem().locks.delete(id);
+    return;
+  }
+  const { error } = await supabase().from("orders").delete().eq("id", id);
+  if (error) throw new Error(`Supabase order delete failed: ${error.message}`);
+}
+
 // ── Runtime customers (snapshot-mode "add a cafe" fallback) ────────────
 
 export async function addRuntimeCustomer(customer: CafeCustomer): Promise<void> {
@@ -237,6 +248,29 @@ export async function setHistoryNote(orderId: string, note: string): Promise<boo
     .eq("order_id", orderId);
   if (error) throw new Error(`Supabase history note update failed: ${error.message}`);
   return true;
+}
+
+/**
+ * Remove an order's local history row, if one exists. In practice this is
+ * almost always a no-op — a history row is only ever written once an order
+ * is marked PAID, and deletion is only offered on Queue/Processed (never-
+ * paid orders) — but it keeps "delete from the sheet" true if that ever
+ * changes.
+ */
+export async function deleteHistoryRow(orderId: string): Promise<boolean> {
+  if (!isLive()) {
+    const idx = mem().orderHistory.findIndex((r) => r.orderId === orderId);
+    if (idx === -1) return false;
+    mem().orderHistory.splice(idx, 1);
+    return true;
+  }
+  const { data, error } = await supabase()
+    .from("order_history")
+    .delete()
+    .eq("order_id", orderId)
+    .select("order_id");
+  if (error) throw new Error(`Supabase history delete failed: ${error.message}`);
+  return (data ?? []).length > 0;
 }
 
 // ── Order locking ────────────────────────────────────────────────────────

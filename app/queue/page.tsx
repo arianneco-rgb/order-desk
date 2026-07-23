@@ -6,14 +6,36 @@ import type { CatalogProduct, Order } from "@/lib/types";
 import { StatusPill } from "@/components/StatusPill";
 import { TestBadge } from "@/components/TestBadge";
 import { SkeletonCard } from "@/components/Skeleton";
+import { Modal } from "@/components/Modal";
+import { ClearAllModal } from "@/components/ClearAllModal";
 import { OrderCard } from "@/components/processed/OrderCard";
-import { buildTitleMap } from "@/components/processed/format";
+import { buildTitleMap, itemsSummary, type TitleMap } from "@/components/processed/format";
 
 const POLL_MS = 2000;
 const RECENT_WINDOW_MS = 90_000;
 // Skip applying polled data to a just-mutated order, so a stale in-flight
 // poll can't clobber a fresh PATCH/draft result (same pattern as Processed).
 const MUTATION_GRACE_MS = 1500;
+
+type DayBucket = "today" | "yesterday" | "older";
+
+const COLUMNS: { key: DayBucket; label: string }[] = [
+  { key: "today", label: "Today" },
+  { key: "yesterday", label: "Yesterday" },
+  { key: "older", label: "Older" },
+];
+
+/** Calendar-day bucket (not a rolling 24h window) — an 11pm order reads as
+ *  "yesterday" once the calendar date has actually turned over. */
+function dayBucket(iso: string): DayBucket {
+  const d = new Date(iso);
+  const now = new Date();
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
+  if (diffDays <= 0) return "today";
+  if (diffDays === 1) return "yesterday";
+  return "older";
+}
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -70,17 +92,56 @@ function ParsingCard({ order }: { order: Order }) {
   );
 }
 
+/** Consolidated kanban card — company, items, status, time. Click for full detail. */
+function KanbanCard({
+  order,
+  titles,
+  onOpen,
+}: {
+  order: Order;
+  titles: TitleMap;
+  onOpen: (order: Order) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(order)}
+      className="w-full rounded-lg border border-forest-200 bg-white p-3 text-left shadow-sm transition-colors hover:border-forest-400 hover:shadow-md"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 truncate text-sm font-semibold text-forest-900">{order.company}</p>
+        {order.isTest && <TestBadge className="shrink-0" />}
+      </div>
+      <p className="mt-1 line-clamp-2 text-xs text-forest-600">
+        {itemsSummary(order, titles) || "No line items recognized yet"}
+      </p>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <StatusPill order={order} className="text-[11px]" />
+        <span className="shrink-0 text-[11px] text-forest-500">{formatTime(order.createdAt)}</span>
+      </div>
+    </button>
+  );
+}
+
 /**
  * The Queue is the WORKING stage (feedback round 4): pasted messages parse
  * here, then STAY here for review — line edits, VAT, discounts, delivery —
  * until Joey clicks Confirm · create draft. Finalized orders (draft created)
  * move to Processed, which is purely the awaiting-payment list.
+ *
+ * Round 7: the working stage is a time-bucketed kanban (Today / Yesterday /
+ * Older) instead of a Needs review / Ready to finalize split — StatusPill
+ * still carries that distinction per-card. Each column scrolls internally
+ * so the page itself doesn't grow unbounded. Cards are deliberately
+ * consolidated; clicking one opens the full order in a popup.
  */
 export default function QueuePage() {
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [popupOrder, setPopupOrder] = useState<Order | null>(null);
+  const [clearAllOpen, setClearAllOpen] = useState(false);
 
   // Local overlay of just-mutated orders (id → freshest copy), so polls
   // within the grace window can't undo a PATCH/draft response.
@@ -128,6 +189,13 @@ export default function QueuePage() {
     setOrders((prev) =>
       prev ? prev.map((o) => (o.id === order.id ? order : o)) : prev
     );
+    setPopupOrder((prev) => (prev && prev.id === order.id ? order : prev));
+  }, []);
+
+  const handleOrderDeleted = useCallback((id: string) => {
+    overlayRef.current.delete(id);
+    setOrders((prev) => (prev ? prev.filter((o) => o.id !== id) : prev));
+    setPopupOrder((prev) => (prev && prev.id === id ? null : prev));
   }, []);
 
   const titles = useMemo(() => buildTitleMap(catalog), [catalog]);
@@ -146,8 +214,6 @@ export default function QueuePage() {
     .filter((o) => o.status === "processed")
     .filter((o) => matchesQuery(o, trimmedQuery))
     .sort(newestFirst);
-  const needsReview = working.filter((o) => o.needsReview);
-  const readyToFinalize = working.filter((o) => !o.needsReview);
 
   const justFinalized = all
     .filter(
@@ -163,12 +229,18 @@ export default function QueuePage() {
         new Date(a.draftCreatedAt ?? 0).getTime()
     );
 
+  // Everything currently rendered anywhere on the page — what "Clear all" wipes.
+  const everyVisibleOrder = useMemo(
+    () => [...parsing, ...working, ...justFinalized],
+    [parsing, working, justFinalized]
+  );
+
   const isLoading = orders === null;
   const isEmpty =
     !isLoading && parsing.length === 0 && working.length === 0 && justFinalized.length === 0;
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="mx-auto max-w-5xl">
       <style>{`
         @keyframes od-shimmer {
           0% { transform: translateX(-100%); }
@@ -182,12 +254,25 @@ export default function QueuePage() {
         .od-progress { animation: od-progress 1.4s ease-in-out infinite; }
       `}</style>
 
-      <h1 className="text-2xl font-semibold text-forest-900">Queue</h1>
-      <p className="mt-1 text-sm text-forest-700">
-        The working stage: review each parsed order, set VAT / discounts /
-        delivery, then <span className="font-semibold">Confirm · create draft</span>{" "}
-        — finalized orders move to Processed for payment confirmation.
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold text-forest-900">Queue</h1>
+          <p className="mt-1 max-w-2xl text-sm text-forest-700">
+            The working stage: review each parsed order, set VAT / discounts /
+            delivery, then <span className="font-semibold">Confirm · create draft</span>{" "}
+            — finalized orders move to Processed for payment confirmation.
+          </p>
+        </div>
+        {everyVisibleOrder.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setClearAllOpen(true)}
+            className="shrink-0 rounded-md border border-red-200 bg-white px-3 py-1.5 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50"
+          >
+            Clear all
+          </button>
+        )}
+      </div>
 
       {error && (
         <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -245,46 +330,40 @@ export default function QueuePage() {
             </section>
           )}
 
-          {/* Needs review first — the ones the parser wasn't sure about */}
-          {needsReview.length > 0 && (
+          {/* Working stage — time-bucketed kanban, each column scrolls on its own */}
+          {working.length > 0 && (
             <section className="mt-6">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-amber-700">
-                Needs review · {needsReview.length}
-              </h2>
-              <div className="mt-2 space-y-4">
-                {needsReview.map((order) => (
-                  <OrderCard
-                    key={order.id}
-                    order={order}
-                    catalog={catalog}
-                    titles={titles}
-                    selected={false}
-                    onSelect={() => {}}
-                    onOrderUpdate={handleOrderUpdate}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Clean parses, ready to finalize */}
-          {readyToFinalize.length > 0 && (
-            <section className="mt-6">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-forest-600">
-                Ready to finalize · {readyToFinalize.length}
-              </h2>
-              <div className="mt-2 space-y-4">
-                {readyToFinalize.map((order) => (
-                  <OrderCard
-                    key={order.id}
-                    order={order}
-                    catalog={catalog}
-                    titles={titles}
-                    selected={false}
-                    onSelect={() => {}}
-                    onOrderUpdate={handleOrderUpdate}
-                  />
-                ))}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                {COLUMNS.map((col) => {
+                  const items = working.filter((o) => dayBucket(o.createdAt) === col.key);
+                  return (
+                    <div
+                      key={col.key}
+                      className="flex flex-col rounded-xl border border-forest-200 bg-forest-50/40 p-3"
+                    >
+                      <div className="flex items-center justify-between px-1 pb-2">
+                        <h3 className="text-sm font-semibold text-forest-800">{col.label}</h3>
+                        <span className="text-xs font-medium text-forest-500">{items.length}</span>
+                      </div>
+                      <div className="od-scroll max-h-[65vh] flex-1 space-y-2 overflow-y-auto pr-0.5">
+                        {items.length === 0 ? (
+                          <p className="rounded-lg border-2 border-dashed border-forest-200 p-4 text-center text-xs text-forest-400">
+                            Nothing here
+                          </p>
+                        ) : (
+                          items.map((order) => (
+                            <KanbanCard
+                              key={order.id}
+                              order={order}
+                              titles={titles}
+                              onOpen={setPopupOrder}
+                            />
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </section>
           )}
@@ -320,6 +399,33 @@ export default function QueuePage() {
           )}
         </>
       )}
+
+      <Modal
+        open={!!popupOrder}
+        onClose={() => setPopupOrder(null)}
+        title={popupOrder?.company ?? "Order"}
+        maxWidthClassName="max-w-xl"
+      >
+        {popupOrder && (
+          <OrderCard
+            order={popupOrder}
+            catalog={catalog}
+            titles={titles}
+            selected={false}
+            onSelect={() => {}}
+            onOrderUpdate={handleOrderUpdate}
+            onOrderDeleted={handleOrderDeleted}
+          />
+        )}
+      </Modal>
+
+      <ClearAllModal
+        open={clearAllOpen}
+        onClose={() => setClearAllOpen(false)}
+        orders={everyVisibleOrder}
+        pageLabel="Queue"
+        onOrderDeleted={handleOrderDeleted}
+      />
     </div>
   );
 }

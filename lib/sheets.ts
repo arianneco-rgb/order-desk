@@ -16,7 +16,7 @@
 // intentionally NOT built.
 
 import { sheetsMode } from "./config";
-import { appendHistory, historyRows, setHistoryNote } from "./store";
+import { appendHistory, deleteHistoryRow, historyRows, setHistoryNote } from "./store";
 import { getCafeCustomers } from "./shopify";
 import { callAppsScript } from "./apps-script";
 import type { CafeCustomer, OrderHistoryRow } from "./types";
@@ -93,4 +93,12 @@ export async function setOrderHistoryNote(
 
   mirrorToSheet("setHistoryNote", { orderId, note }, `note on ${orderId}`);
   return true;
+}
+
+/** Remove an order's row from local history (if any) and mirror the removal. */
+export async function deleteOrderHistory(orderId: string): Promise<void> {
+  const found = await deleteHistoryRow(orderId);
+  if (!found || sheetsMode() === "mock") return;
+
+  mirrorToSheet("deleteHistoryRow", { orderId }, `delete history row ${orderId}`);
 }
