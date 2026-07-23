@@ -17,23 +17,25 @@ const RECENT_WINDOW_MS = 90_000;
 // poll can't clobber a fresh PATCH/draft result (same pattern as Processed).
 const MUTATION_GRACE_MS = 1500;
 
-type DayBucket = "today" | "yesterday" | "older";
+type DayBucket = "today" | "week" | "older";
 
 const COLUMNS: { key: DayBucket; label: string }[] = [
   { key: "today", label: "Today" },
-  { key: "yesterday", label: "Yesterday" },
+  { key: "week", label: "This week" },
   { key: "older", label: "Older" },
 ];
 
-/** Calendar-day bucket (not a rolling 24h window) — an 11pm order reads as
- *  "yesterday" once the calendar date has actually turned over. */
+/** Calendar-day bucket (not a rolling 24h/7d window): "today" is the same
+ *  calendar date; "week" is Monday..yesterday of the CURRENT calendar week;
+ *  anything from last week or earlier is "older". */
 function dayBucket(iso: string): DayBucket {
   const d = new Date(iso);
   const now = new Date();
   const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
   if (diffDays <= 0) return "today";
-  if (diffDays === 1) return "yesterday";
+  const daysSinceMonday = (now.getDay() + 6) % 7; // Mon→0 … Sun→6
+  if (diffDays <= daysSinceMonday) return "week";
   return "older";
 }
 
@@ -129,7 +131,7 @@ function KanbanCard({
  * until Joey clicks Confirm · create draft. Finalized orders (draft created)
  * move to Processed, which is purely the awaiting-payment list.
  *
- * Round 7: the working stage is a time-bucketed kanban (Today / Yesterday /
+ * Round 7: the working stage is a time-bucketed kanban (Today / This week /
  * Older) instead of a Needs review / Ready to finalize split — StatusPill
  * still carries that distinction per-card. Each column scrolls internally
  * so the page itself doesn't grow unbounded. Cards are deliberately
