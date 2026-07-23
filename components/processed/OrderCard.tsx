@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import clsx from "clsx";
 import type { CatalogProduct, Order } from "@/lib/types";
 import { formatPeso, formatPouchQty, formatSampleQty } from "@/lib/conversions";
@@ -315,6 +316,17 @@ export function OrderCard({
           >
             {draftBusy ? "Creating draft…" : "Confirm · create draft"}
           </button>
+        )}
+        {order.shopifyDraftId && (
+          <Link
+            href={`/invoice/${order.id}`}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="rounded-md border border-forest-300 bg-white px-3 py-1.5 text-sm font-semibold text-forest-800 transition-colors hover:bg-forest-50"
+          >
+            Generate invoice
+          </Link>
         )}
         <button
           type="button"
