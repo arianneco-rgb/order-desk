@@ -458,13 +458,23 @@ export async function getCustomerDefaults(
 }
 
 /**
- * ₱ this customer actually PAID for samples across their Shopify orders —
- * the gross side of the sample-credit suggestion (free samples contribute
- * ₱0 because line totals are post-discount). Sample lines are identified by
- * their SAM- SKU prefix.
+ * Sample-credit eligibility source data for a customer:
+ *  - paidSampleTotal: ₱ actually PAID for samples across their Shopify
+ *    orders (free samples contribute ₱0 since line totals are
+ *    post-discount). Sample lines are identified by their SAM- SKU prefix.
+ *  - hasPriorRealOrder: whether they have any PAID order that already
+ *    contains a real (non-sample) product line — i.e. whether they've
+ *    already placed their "first" bulk order, regardless of when.
+ * Both come from the same Shopify query since they read the same order
+ * history. See lib/pipeline.ts for how these combine into the actual
+ * auto-apply rule.
  */
-export async function getPaidSampleTotal(customerId: string): Promise<number> {
-  if (shopifyMode() === "snapshot" || customerId.startsWith("mock:")) return 0;
+export async function getSampleCreditInfo(
+  customerId: string
+): Promise<{ paidSampleTotal: number; hasPriorRealOrder: boolean }> {
+  if (shopifyMode() === "snapshot" || customerId.startsWith("mock:")) {
+    return { paidSampleTotal: 0, hasPriorRealOrder: false };
+  }
   const data = await adminGraphQL<{
     customer: {
       orders: {
@@ -499,17 +509,20 @@ export async function getPaidSampleTotal(customerId: string): Promise<number> {
     }`,
     { id: customerId }
   );
-  if (!data.customer) return 0;
-  let total = 0;
+  if (!data.customer) return { paidSampleTotal: 0, hasPriorRealOrder: false };
+  let paidSampleTotal = 0;
+  let hasPriorRealOrder = false;
   for (const { node: order } of data.customer.orders.edges) {
     if (order.displayFinancialStatus !== "PAID") continue;
     for (const { node: li } of order.lineItems.edges) {
       if (li.sku?.startsWith("SAM-")) {
-        total += Number(li.discountedTotalSet.shopMoney.amount) || 0;
+        paidSampleTotal += Number(li.discountedTotalSet.shopMoney.amount) || 0;
+      } else if (li.sku) {
+        hasPriorRealOrder = true;
       }
     }
   }
-  return Math.round(total * 100) / 100;
+  return { paidSampleTotal: Math.round(paidSampleTotal * 100) / 100, hasPriorRealOrder };
 }
 
 // ── Report data ──────────────────────────────────────────────────────────

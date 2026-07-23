@@ -6,11 +6,19 @@ import type { DeliveryMethod, Order } from "@/lib/types";
 import { DELIVERY_METHODS } from "@/lib/delivery";
 import { formatPeso } from "@/lib/conversions";
 
+/** Title the server auto-applies this discount under — see lib/pipeline.ts. */
+const AUTO_SAMPLE_CREDIT_TITLE = "Sample credit";
+
 /**
  * Joey's pre-draft choices (team-requested): eligible-discounts toggle,
- * manual discount / sample credit, VAT tickbox, delivery method + fee, free
- * samples. Every change reprices the order live — the reply's total always
- * matches what the draft will say. Defaults come from the Shopify profile.
+ * manual discount, VAT tickbox, delivery method + fee, free samples. Every
+ * change reprices the order live — the reply's total always matches what
+ * the draft will say. Defaults come from the Shopify profile.
+ *
+ * The sample credit itself is NOT a button here — it's a business rule the
+ * server applies automatically (only on a cafe's first case-sized order
+ * after a sample, see lib/pipeline.ts applySampleCreditAutomation), so it
+ * only ever shows as an informational line, never something to click.
  */
 export function DraftOptionsPanel({
   order,
@@ -28,31 +36,14 @@ export function DraftOptionsPanel({
   const [discountTitle, setDiscountTitle] = useState("");
   const [feeDraft, setFeeDraft] = useState("");
 
-  // Sample-credit suggestion (per cafe, from Shopify history minus used).
-  const [credit, setCredit] = useState<number | null>(null);
-
   const opts = order.options;
   const hasSamples = order.items.some((i) => i.form === "sample");
   const editable = order.status === "processed" || order.status === "draft_created";
+  const isAutoSampleCredit = opts.manualDiscount?.title === AUTO_SAMPLE_CREDIT_TITLE;
 
   useEffect(() => {
     setFeeDraft(opts.deliveryFee !== undefined ? String(opts.deliveryFee) : "");
   }, [order.id, opts.deliveryFee]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setCredit(null);
-    if (!order.customerId || order.customerId.startsWith("mock:")) return;
-    fetch(`/api/sample-credit?customerId=${encodeURIComponent(order.customerId)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!cancelled && d && typeof d.available === "number") setCredit(d.available);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [order.id, order.customerId]);
 
   async function patch(change: Record<string, unknown>) {
     setBusy(true);
@@ -189,23 +180,35 @@ export function DraftOptionsPanel({
           )}
         </div>
 
-        {/* Manual discount / sample credit */}
+        {/* Manual discount / auto sample credit */}
         {opts.manualDiscount ? (
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-forest-200 px-2.5 py-0.5 text-xs font-semibold text-forest-900">
+            <span
+              className={clsx(
+                "rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                isAutoSampleCredit ? "bg-amber-100 text-amber-900" : "bg-forest-200 text-forest-900"
+              )}
+            >
               {opts.manualDiscount.title}:{" "}
               {opts.manualDiscount.valueType === "PERCENTAGE"
                 ? `${opts.manualDiscount.value}% off`
                 : `−${formatPeso(opts.manualDiscount.value)}`}
             </span>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void patch({ manualDiscount: null })}
-              className="text-xs font-semibold text-forest-600 hover:text-forest-900 hover:underline"
-            >
-              Remove
-            </button>
+            {isAutoSampleCredit ? (
+              <span className="text-xs text-forest-500">
+                Applied automatically — this cafe&apos;s first case-sized order after a
+                sample. Drops off on its own if no single line has a full case.
+              </span>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void patch({ manualDiscount: null })}
+                className="text-xs font-semibold text-forest-600 hover:text-forest-900 hover:underline"
+              >
+                Remove
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
@@ -233,7 +236,7 @@ export function DraftOptionsPanel({
               value={discountTitle}
               disabled={busy}
               onChange={(e) => setDiscountTitle(e.target.value)}
-              placeholder="Label (e.g. Sample credit)"
+              placeholder="Label (e.g. Loyalty discount)"
               className={clsx(smallInput, "w-44")}
             />
             <button
@@ -244,25 +247,6 @@ export function DraftOptionsPanel({
             >
               Apply
             </button>
-            {credit !== null && credit > 0 && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() =>
-                  void patch({
-                    manualDiscount: {
-                      valueType: "FIXED_AMOUNT",
-                      value: credit,
-                      title: "Sample credit",
-                    },
-                  })
-                }
-                title="₱ this cafe paid for samples (from Shopify) minus credits already applied"
-                className="rounded-full border border-amber-400 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-100"
-              >
-                Apply {formatPeso(credit)} sample credit
-              </button>
-            )}
           </div>
         )}
       </div>

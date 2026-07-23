@@ -8,14 +8,61 @@ import {
   calculateDraft,
   getCatalog,
   getCustomerDefaults,
+  getSampleCreditInfo,
 } from "./shopify";
 import { shopifyMode } from "./config";
 import { defaultDeliveryMethod } from "./delivery";
+import { MOQ_POUCHES } from "./conversions";
 import { parseMessage } from "./parser";
 import { priceItems, itemsText, localDraftTotals, pricingReviewReasons } from "./pricing";
 import { totalOrderReply } from "./templates";
-import { listOrders, saveOrder, PROCESS_DELAY_MS } from "./store";
+import { listOrders, saveOrder, usedSampleCredit, PROCESS_DELAY_MS } from "./store";
 import type { Order, OrderItem } from "./types";
+
+/**
+ * The auto-applied "first bulk order after a sample" credit (business
+ * rule, not a suggestion Joey opts into): a customer's Shopify-paid sample
+ * spend is credited back automatically, ONLY on the very first order that
+ * (a) comes after any sample order and before any other real order, and
+ * (b) has at least one full case (10 pouches of ONE product) — 5+5 across
+ * two products does NOT qualify, only a single line hitting the MOQ does.
+ * Recomputed on every reprice, so it applies/retracts itself as items
+ * change; never touches a discount Joey set under a different title.
+ */
+const AUTO_SAMPLE_CREDIT_TITLE = "Sample credit";
+
+async function applySampleCreditAutomation(order: Order): Promise<void> {
+  if (!order.customerId || order.customerId.startsWith("mock:")) return;
+  const current = order.options.manualDiscount;
+  if (current && current.title !== AUTO_SAMPLE_CREDIT_TITLE) return; // Joey's own discount — never touch it
+
+  const qualifiesByCase = order.items.some(
+    (i) => i.form === "pouch" && i.qty >= MOQ_POUCHES
+  );
+
+  let available = 0;
+  if (qualifiesByCase) {
+    try {
+      const { paidSampleTotal, hasPriorRealOrder } = await getSampleCreditInfo(order.customerId);
+      if (!hasPriorRealOrder) {
+        const used = await usedSampleCredit(order.customerId);
+        available = Math.max(0, Math.round((paidSampleTotal - used) * 100) / 100);
+      }
+    } catch (err) {
+      console.error("Sample credit lookup failed (skipping auto-apply):", err);
+    }
+  }
+
+  if (available > 0) {
+    order.options.manualDiscount = {
+      valueType: "FIXED_AMOUNT",
+      value: available,
+      title: AUTO_SAMPLE_CREDIT_TITLE,
+    };
+  } else if (current?.title === AUTO_SAMPLE_CREDIT_TITLE) {
+    order.options.manualDiscount = undefined; // no longer eligible — retract it
+  }
+}
 
 /**
  * Advance the order state machine. Serverless-safe: no timers — every read
@@ -121,6 +168,7 @@ export async function repriceOrder(
   parserSoftNotes?: string[]
 ): Promise<Order> {
   const catalog = await getCatalog();
+  await applySampleCreditAutomation(order);
   const priced = priceItems(order.items, catalog);
 
   let totals = localDraftTotals(priced, order.options);
