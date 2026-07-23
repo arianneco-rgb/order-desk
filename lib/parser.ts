@@ -46,6 +46,49 @@ function parseNumberWord(word: string): number | null {
 
 const NUM = "(\\d+(?:\\.\\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|isa(?:ng)?|dalawa(?:ng)?|tatlo(?:ng)?|apat|lima(?:ng)?|anim|pito(?:ng)?|walo(?:ng)?|siyam|sampu(?:ng)?)";
 
+// Same quantity phrases as extractQty below, in the same priority order,
+// combined into one alternation so a whole segment can be scanned for EVERY
+// quantity mention it contains (not just the first) — this is how
+// splitRepeatedQuantities finds where a second un-punctuated item begins.
+const QTY_SPAN_SOURCE = [
+  `${NUM}\\s*(?:x\\s*)?(?:cases?|cs|box(?:es)?)\\b`,
+  `(?:a\\s+)?case\\s+of\\b`,
+  `${NUM}\\s*(?:x\\s*)?(?:pouch(?:es)?|packs?|bags?|pcs?|pieces?)\\b`,
+  `${NUM}\\s*(?:x\\s*)?(?:samples?|sachets?|trial)\\b`,
+  `samples?\\b`,
+  `\\d+\\s*x\\s*\\d+(?:\\.\\d+)?\\s*(?:kgs?|kilos?|g)\\b`,
+  `${NUM}\\s*(?:kgs?|kilos?|kilograms?)\\b`,
+  `\\d+(?:\\.\\d+)?\\s*g(?:rams?)?\\b`,
+  `(?:^|\\s)\\d+(?=\\s|$)`,
+].join("|");
+
+/**
+ * Splits one segment into several when it has more than one quantity
+ * mention with no punctuation between them — "2 shiori 1 kasane" typed
+ * without a comma. Without this, findProduct/extractQty each only ever
+ * return a single winner per segment, so the second item is silently
+ * dropped. Segments with 0-1 quantity mentions pass through unchanged.
+ */
+function splitRepeatedQuantities(segment: string): string[] {
+  const spanRe = new RegExp(QTY_SPAN_SOURCE, "gi");
+  const starts: number[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = spanRe.exec(segment))) {
+    // The bare-number branch's leading `(?:^|\s)` can include a space
+    // before the digit — start the piece at the digit, not the space.
+    starts.push(m.index + (m[0].length - m[0].trimStart().length));
+    if (m.index === spanRe.lastIndex) spanRe.lastIndex++;
+  }
+  if (starts.length < 2) return [segment];
+  return starts
+    .map((start, i) =>
+      segment
+        .slice(i === 0 ? 0 : start, i + 1 < starts.length ? starts[i + 1] : segment.length)
+        .trim()
+    )
+    .filter(Boolean);
+}
+
 /** Extract a quantity from one message segment. */
 function extractQty(segment: string): QtyMatch {
   // "2 cases", "1 case", "case of ..." (implicit 1)
@@ -209,7 +252,8 @@ function segmentMessage(message: string): string[] {
     .toLowerCase()
     .split(/\n|,|;|\+|&|\band\b/)
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .flatMap(splitRepeatedQuantities);
 }
 
 /** True when the segment looks like it wanted to order something we missed. */
