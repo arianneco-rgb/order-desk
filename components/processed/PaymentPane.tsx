@@ -25,6 +25,13 @@ export function PaymentPane({
   const [confirming, setConfirming] = useState(false);
   const [manualOverride, setManualOverride] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Distinct from "no match yet" — a genuine failure to reach the inbox
+  // (bad Apps Script deployment/secret, wrong Gmail account, etc.), so it's
+  // never silently indistinguishable from a search that ran and found
+  // nothing. A 409 (another money-route action mid-flight) is excluded —
+  // that's benign lock contention, not a real error, and clears itself on
+  // the next poll.
+  const [inboxError, setInboxError] = useState<string | null>(null);
   const [removingIndex, setRemovingIndex] = useState<number | null>(null);
   const [lightbox, setLightbox] = useState<ProofOfPayment | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -39,6 +46,7 @@ export function PaymentPane({
     setManualOverride(false);
     setError(null);
     setSimulated(false);
+    setInboxError(null);
     setLightbox(null);
     if (fileRef.current) fileRef.current.value = "";
   }, [orderId]);
@@ -48,12 +56,20 @@ export function PaymentPane({
     setChecking(true);
     try {
       const res = await fetch(`/api/orders/${orderId}/bpi-match`);
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status !== 409) {
+          setInboxError(
+            typeof data.error === "string" ? data.error : `Couldn't check the inbox (HTTP ${res.status}).`
+          );
+        }
+        return;
+      }
+      setInboxError(null);
       setSimulated(!!data.simulated);
       if (data.order) onOrderUpdate(data.order);
     } catch {
-      // Network hiccup — the poll will retry.
+      setInboxError("Couldn't reach Order Desk to check the inbox — check your connection.");
     } finally {
       setChecking(false);
     }
@@ -329,6 +345,19 @@ export function PaymentPane({
                     ? ` · matched to Draft ${order.shopifyDraftName.replace(/ \((mock|test)\)$/, "")}`
                     : ""}
                 </p>
+              </div>
+            ) : inboxError ? (
+              <div className="mt-2 rounded-lg border border-red-300 bg-red-50 p-3">
+                <p className="text-sm font-semibold text-red-900">Couldn&apos;t check the inbox</p>
+                <p className="mt-0.5 text-sm text-red-700">{inboxError}</p>
+                <button
+                  type="button"
+                  onClick={() => void checkInbox()}
+                  disabled={checking}
+                  className="mt-2 rounded-md border border-red-400 bg-white px-2.5 py-1 text-xs font-semibold text-red-900 transition-colors hover:bg-red-100 disabled:opacity-50"
+                >
+                  {checking ? "Checking…" : "Try again"}
+                </button>
               </div>
             ) : (
               <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
