@@ -83,9 +83,18 @@ export function priceItems(
     }
 
     if (item.form === "sample") {
-      const samplePrice = product.sample?.price ?? null;
+      const rawSamplePrice = product.sample?.price ?? null;
+      // A real sample variant should never be free — ₱0 in Shopify is a
+      // data-entry gap (missing price), not an intentional freebie, so
+      // treat it the same as a missing variant instead of silently pricing
+      // the line at ₱0.
+      const samplePrice = rawSamplePrice === 0 ? null : rawSamplePrice;
       if (samplePrice === null) {
-        warnings.push(`${product.title} has no sample variant in Shopify.`);
+        warnings.push(
+          rawSamplePrice === 0
+            ? `${product.title}'s sample variant has no price set in Shopify (shows ₱0) — fix it in Shopify before confirming.`
+            : `${product.title} has no sample variant in Shopify.`
+        );
       }
       return {
         ...item,

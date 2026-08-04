@@ -246,14 +246,75 @@ function isConversationNoise(segment: string): boolean {
   );
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Splits one segment into several when it names 2+ distinct catalog
+ * products with nothing but connective words/punctuation between them and
+ * no per-product quantity — "sample the following please: Miyo Kinomi
+ * Shizu" typed as one run-on segment. Without this, findProduct only ever
+ * returns a single winner (longest alias) per segment, silently dropping
+ * the rest. Segments naming 0-1 products, or where a quantity separates
+ * the mentions (that's splitRepeatedQuantities' job), pass through
+ * unchanged.
+ */
+function splitMultipleProducts(segment: string, catalog: CatalogProduct[]): string[] {
+  interface Hit { start: number; end: number; product: CatalogProduct }
+  const hits: Hit[] = [];
+  for (const product of catalog) {
+    for (const alias of product.aliases) {
+      const re = new RegExp(`\\b${escapeRegExp(alias)}\\b`, "g");
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(segment))) {
+        hits.push({ start: m.index, end: m.index + alias.length, product });
+      }
+    }
+  }
+  if (hits.length < 2) return [segment];
+
+  // Longest alias wins at any given position ("koyo hojicha" over "koyo").
+  hits.sort((a, b) => a.start - b.start || b.end - b.start - (a.end - a.start));
+  const kept: Hit[] = [];
+  for (const hit of hits) {
+    if (!kept.some((k) => hit.start < k.end && hit.end > k.start)) kept.push(hit);
+  }
+
+  // One slice per distinct product, left to right — a product mentioned
+  // twice in the same segment only needs to be split out once.
+  const seen = new Set<string>();
+  const uniqueKept = kept.filter((h) => {
+    if (seen.has(h.product.key)) return false;
+    seen.add(h.product.key);
+    return true;
+  });
+  if (uniqueKept.length < 2) return [segment];
+
+  // A number between two product mentions means splitRepeatedQuantities
+  // already owns this segment ("2 shiori 1 kasane") — don't double-split.
+  for (let i = 1; i < uniqueKept.length; i++) {
+    if (/\d/.test(segment.slice(uniqueKept[i - 1].end, uniqueKept[i].start))) return [segment];
+  }
+
+  return uniqueKept
+    .map((hit, i) =>
+      segment
+        .slice(hit.start, i + 1 < uniqueKept.length ? uniqueKept[i + 1].start : segment.length)
+        .trim()
+    )
+    .filter(Boolean);
+}
+
 /** Split a message into candidate line segments. */
-function segmentMessage(message: string): string[] {
+function segmentMessage(message: string, catalog: CatalogProduct[]): string[] {
   return precleanConversation(message)
     .toLowerCase()
     .split(/\n|,|;|\+|&|\band\b/)
     .map((s) => s.trim())
     .filter(Boolean)
-    .flatMap(splitRepeatedQuantities);
+    .flatMap(splitRepeatedQuantities)
+    .flatMap((s) => splitMultipleProducts(s, catalog));
 }
 
 /** True when the segment looks like it wanted to order something we missed. */
@@ -272,7 +333,10 @@ export function parseMessage(
   const reasons: string[] = [];
   const softNotes: string[] = [];
   const items: OrderItem[] = [];
-  const segments = segmentMessage(message);
+  const segments = segmentMessage(message, catalog);
+  const lowerMessage = message.toLowerCase();
+  const sampleWordAnywhere = /\bsamples?\b/.test(lowerMessage);
+  const caseWordAnywhere = /\bcases?\b/.test(lowerMessage);
 
   // A qty with no product ("1 case" in "1 case and 3 pouches of kasane")
   // carries over to the next segment that names a product.
@@ -299,15 +363,29 @@ export function parseMessage(
     let samples = qty.samples ?? 0;
     let confidence = qty.matched ? qty.confidence : 0;
 
-    // Segment names a product but no quantity → assume 1 pouch, flag it.
+    // Segment names a product but no quantity in the segment itself — look
+    // at the wider message before giving up ("sample the following: Miyo
+    // Kinomi Shizu" only says "sample" once, before the product list).
     if (!qty.matched) {
-      if (/\bsamples?\b/.test(segment)) {
+      const sampleInSegment = /\bsamples?\b/.test(segment);
+      if (sampleInSegment || sampleWordAnywhere) {
         samples = 1;
         confidence = 0.6;
+        if (!sampleInSegment) {
+          softNotes.push(`${product.title}: read as a sample (message mentions "sample").`);
+        }
       } else {
-        pouches = 1;
-        confidence = 0.3;
-        reasons.push(`No quantity found for ${product.title} — assumed 1 pouch`);
+        // No safe default exists for a case count ("case" mentioned
+        // somewhere but not attached to this product) or for a bare
+        // product name with no quantity signal at all — add the line so
+        // it isn't silently dropped, but leave the quantity blank rather
+        // than guess, and always flag it for review.
+        confidence = 0;
+        reasons.push(
+          caseWordAnywhere
+            ? `${product.title}: looks like a case order but the quantity wasn't clear — fill it in manually.`
+            : `${product.title}: no quantity recognized — added with no quantity, fill it in manually.`
+        );
       }
     }
 
@@ -327,6 +405,9 @@ export function parseMessage(
 
     if (pouches > 0) upsert(items, product.key, "pouch", pouches, confidence);
     if (samples > 0) upsert(items, product.key, "sample", samples, confidence);
+    // Product recognized but no quantity anywhere — still add the line
+    // (already flagged above) instead of silently dropping it.
+    if (pouches === 0 && samples === 0) upsert(items, product.key, "pouch", 0, 0);
   }
 
   // "the usual" / repeat orders — the fallback parser can't see history.

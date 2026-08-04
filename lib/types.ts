@@ -36,12 +36,27 @@ export interface PricedItem extends OrderItem {
   warnings: string[];
 }
 
+/**
+ * Real BPI notification emails carry no payer name at all (verified
+ * against 7 real samples, 2026-07-29) — matching is by amount + reference
+ * + (InstaPay only) the sending account's last 4 digits, never a name.
+ */
 export interface BpiMatch {
   amount: number;
-  senderName: string;
   ref: string;
   date: string;
   emailId: string;
+  /** Claims this row in the BPI Transactions sheet — see lib/bpi.ts. */
+  matchKey: string;
+  type: "instapay" | "edpo";
+  /** Only ever set for InstaPay — EDPO carries no sender account info. */
+  fromAccountLast4?: string;
+  sourceBank?: string;
+  /** EDPO is a pre-advice ("will be credited within the day") — false means the money isn't in the account yet. */
+  settled: boolean;
+  warnings: string[];
+  /** "reference" when a proof screenshot's extracted ref matched this row exactly — otherwise "amount". */
+  matchedBy?: "reference" | "amount";
 }
 
 /** What Claude vision read off a proof screenshot (best-effort, key-gated). */
@@ -164,6 +179,17 @@ export interface Order {
    * creation, so an order's real/test status can't change mid-flow.
    */
   isTest?: boolean;
+  /**
+   * Set once an invoice is generated (see app/api/orders/[id]/invoice) —
+   * locked in permanently so re-viewing the invoice never silently assigns
+   * a new number. "{MerchantCode}-{seq}", matching the Invoice Ledger.
+   */
+  invoiceNumber?: string;
+  invoicePreparedBy?: string;
+  invoiceGeneratedAt?: string;
+  invoicePoNo?: string;
+  /** The real Shopify order name (e.g. "#5358") at generation time — locked in so it never has to be re-fetched. */
+  invoiceOrderNo?: string;
 }
 
 export interface CafeCustomer {

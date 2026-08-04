@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { tick } from "@/lib/pipeline";
-import { createOrder, listOrders } from "@/lib/store";
+import { createOrder } from "@/lib/store";
+import { withLightProofRefs } from "@/lib/proof-refs";
 
 export const dynamic = "force-dynamic";
 
-/** List all orders. Every read also advances queued/processing orders. */
+/**
+ * List active (not-yet-paid) orders. Every read also advances
+ * queued/processing orders — tick() does one DB fetch and returns the same
+ * (now up-to-date) list, so this never re-fetches on top of it.
+ */
 export async function GET() {
-  await tick();
-  return NextResponse.json({ orders: await listOrders() });
+  return NextResponse.json({ orders: withLightProofRefs(await tick()) });
 }
 
 /** Intake: cafe + pasted message → a queued order. */

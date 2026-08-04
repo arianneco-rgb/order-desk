@@ -28,7 +28,8 @@ interface MemDb {
   orders: Map<string, Order>;
   runtimeCustomers: CafeCustomer[];
   orderHistory: OrderHistoryRow[];
-  locks: Set<string>;
+  /** Value is when the lock was claimed (ms) — lets a stale lock self-heal, same as the Supabase branch. */
+  locks: Map<string, number>;
   testMode: boolean;
 }
 
@@ -43,7 +44,7 @@ function mem(): MemDb {
       orders: new Map(),
       runtimeCustomers: [],
       orderHistory: [],
-      locks: new Set(),
+      locks: new Map(),
       testMode: false,
     };
   }
@@ -154,6 +155,31 @@ export async function listOrders(): Promise<Order[]> {
   const { data, error } = await supabase()
     .from("orders")
     .select("data")
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(`Supabase order list failed: ${error.message}`);
+  return (data ?? []).map((row) => normalizeOrder(row.data as Order));
+}
+
+/**
+ * Every current caller (the polled /api/orders route, tick(), duplicate
+ * detection, BPI matching) only ever needs orders that are still "in
+ * flight" — none of them read or display paid orders, and Processed
+ * already has its own client-side fallback for a JUST-paid order dropping
+ * out of the next poll. Paid orders are the fastest-growing, least-needed
+ * part of the table for these call sites, so this filters at the DB level
+ * (using the existing `orders_status_idx`) instead of fetching everything
+ * and discarding most of it in JS on every 2-2.5s poll.
+ */
+export async function listActiveOrders(): Promise<Order[]> {
+  if (!isLive()) {
+    return Array.from(mem().orders.values())
+      .filter((o) => o.status !== "paid")
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  const { data, error } = await supabase()
+    .from("orders")
+    .select("data")
+    .neq("status", "paid")
     .order("created_at", { ascending: false });
   if (error) throw new Error(`Supabase order list failed: ${error.message}`);
   return (data ?? []).map((row) => normalizeOrder(row.data as Order));
@@ -276,24 +302,39 @@ export async function deleteHistoryRow(orderId: string): Promise<boolean> {
 // ── Order locking ────────────────────────────────────────────────────────
 // Money-facing routes (create draft, confirm payment) claim this BEFORE
 // their first other await so overlapping double-submits can't both pass a
-// status check and mutate Shopify twice. In memory mode this is a plain Set
+// status check and mutate Shopify twice. In memory mode this is a plain Map
 // check-and-set (atomic within one process). In Supabase mode it's an
 // UPDATE ... WHERE locked_at IS NULL, which Postgres executes atomically —
 // so it holds even across multiple serverless instances, which the
-// in-memory Set never could.
+// in-memory Map never could.
+//
+// A lock older than LOCK_STALE_MS is treated as free. Without this, a
+// request that dies between its Shopify call succeeding and its own
+// `finally { unlockOrder }` running (a platform-level timeout/crash, not a
+// thrown error — those still hit `finally` normally) leaves the order
+// permanently unconfirmable, since nothing else ever clears locked_at.
+// Caught 2026-07-24: a confirm-payment call completed the Shopify draft
+// (#D3620 → real order #5376, PAID) but the function never got to save
+// that back or release the lock — the order sat stuck for 4+ hours
+// showing "Already confirming" on every retry, even though it had already
+// been paid. LOCK_STALE_MS is comfortably longer than any real Shopify
+// call should take, short enough to self-heal quickly if this recurs.
+const LOCK_STALE_MS = 60_000;
 
 export async function tryLockOrder(id: string): Promise<boolean> {
   if (!isLive()) {
     const locks = mem().locks;
-    if (locks.has(id)) return false;
-    locks.add(id);
+    const claimedAt = locks.get(id);
+    if (claimedAt !== undefined && Date.now() - claimedAt < LOCK_STALE_MS) return false;
+    locks.set(id, Date.now());
     return true;
   }
+  const staleCutoff = new Date(Date.now() - LOCK_STALE_MS).toISOString();
   const { data, error } = await supabase()
     .from("orders")
     .update({ locked_at: new Date().toISOString() })
     .eq("id", id)
-    .is("locked_at", null)
+    .or(`locked_at.is.null,locked_at.lt.${staleCutoff}`)
     .select("id");
   if (error) throw new Error(`Supabase lock claim failed: ${error.message}`);
   return (data ?? []).length > 0;

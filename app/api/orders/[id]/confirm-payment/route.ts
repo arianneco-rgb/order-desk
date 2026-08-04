@@ -3,6 +3,7 @@ import { getCatalog, completeDraftAsPaid } from "@/lib/shopify";
 import { priceItems, itemsText } from "@/lib/pricing";
 import { paidConfirmationReply } from "@/lib/templates";
 import { appendOrderHistory } from "@/lib/sheets";
+import { claimTransaction } from "@/lib/bpi";
 import { getOrder, saveOrder, tryLockOrder, unlockOrder } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
@@ -43,10 +44,21 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            "No BPI email matched for this amount yet — verify manually or wait.",
+            "No BPI transaction matched for this amount yet — verify manually or wait.",
         },
         { status: 409 }
       );
+    }
+
+    // Claim the transaction row NOW, before touching Shopify — this is the
+    // actual dedupe that stops the same payment being applied to two
+    // different orders (a candidate can be shown to several same-amount
+    // orders at preview time; only one can win the claim here).
+    if (order.payment.bpiMatch) {
+      const claim = await claimTransaction(order, order.payment.bpiMatch.matchKey);
+      if (!claim.ok) {
+        return NextResponse.json({ error: claim.error }, { status: 409 });
+      }
     }
 
     const { orderId } = await completeDraftAsPaid(order);

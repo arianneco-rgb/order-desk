@@ -29,7 +29,7 @@ Every integration checks its own env var; missing var = mock. Mix freely.
 | Shopify | `SHOPIFY_STORE` + (`SHOPIFY_CLIENT_ID`+`SHOPIFY_CLIENT_SECRET`, or `SHOPIFY_ADMIN_TOKEN`) | Real **snapshot** of the ritualmatcha.ph catalog + 143 wholesale cafes (2026-07-02); draft orders are mocked |
 | Google Sheets | `APPS_SCRIPT_URL` + `APPS_SCRIPT_SECRET` + `SHEET_ID` | In-memory mirror |
 | Claude parsing | `ANTHROPIC_API_KEY` *(later phase)* | Keyword/regex fallback parser |
-| BPI email | Same `APPS_SCRIPT_URL`/`APPS_SCRIPT_SECRET` *(reads the deploying Google account's own Gmail)* | Simulated inbox (a matching transfer "arrives" ~8s after a draft is created) |
+| BPI matching | Same `APPS_SCRIPT_URL`/`APPS_SCRIPT_SECRET` *(reads a shared "BPI Transactions" sheet — a separate Apps Script project, `scripts/apps-script/BpiMatching.gs`, logs it from Gmail on a timer)* | Simulated log (a matching transaction "arrives" ~8s after a draft is created) |
 | Database | `SUPABASE_URL` + `SUPABASE_SECRET_KEY` *(tables via [scripts/db/schema.sql](scripts/db/schema.sql))* | In-memory (resets on restart) |
 | Auth | `DASHBOARD_PASSWORD` (+ `AUTH_SECRET`) | Auth disabled (local dev only) |
 

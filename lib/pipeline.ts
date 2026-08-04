@@ -16,7 +16,7 @@ import { MOQ_POUCHES } from "./conversions";
 import { parseMessage } from "./parser";
 import { priceItems, itemsText, localDraftTotals, pricingReviewReasons } from "./pricing";
 import { totalOrderReply } from "./templates";
-import { listOrders, saveOrder, usedSampleCredit, PROCESS_DELAY_MS } from "./store";
+import { listActiveOrders, saveOrder, usedSampleCredit, PROCESS_DELAY_MS } from "./store";
 import type { Order, OrderItem } from "./types";
 
 /**
@@ -70,9 +70,18 @@ async function applySampleCreditAutomation(order: Order): Promise<void> {
  *   queued → processing (immediately)
  *   processing → processed (after the processing window, via the parser)
  */
-export async function tick(): Promise<void> {
+/**
+ * Advances queued→processing→processed orders, then returns the same
+ * (now up-to-date) list it fetched — callers that need a fresh order list
+ * right after a tick (the /api/orders route) reuse this instead of doing
+ * a second full fetch. Every element is mutated in place by
+ * processOrder()/the status writes below, so the returned array already
+ * reflects any transitions made during this call.
+ */
+export async function tick(): Promise<Order[]> {
   const now = Date.now();
-  for (const order of await listOrders()) {
+  const orders = await listActiveOrders();
+  for (const order of orders) {
     if (order.status === "queued") {
       order.status = "processing";
       if (!order.processAfter) {
@@ -88,6 +97,7 @@ export async function tick(): Promise<void> {
       await processOrder(order);
     }
   }
+  return orders;
 }
 
 export async function processOrder(order: Order): Promise<Order> {
@@ -132,10 +142,9 @@ async function duplicateReasons(order: Order): Promise<string[]> {
   const message = order.rawMessage.trim();
   const createdAt = Date.parse(order.createdAt);
 
-  for (const other of await listOrders()) {
+  for (const other of await listActiveOrders()) {
     if (other.id === order.id) continue;
     if (other.company.trim().toLowerCase() !== company) continue;
-    if (other.status === "paid") continue;
     const gap = Math.abs(createdAt - Date.parse(other.createdAt));
 
     if (other.rawMessage.trim() === message && gap < IDENTICAL_WINDOW_MS) {

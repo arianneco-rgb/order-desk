@@ -320,8 +320,6 @@ export function OrderCard({
         {order.shopifyDraftId && (
           <Link
             href={`/invoice/${order.id}`}
-            target="_blank"
-            rel="noreferrer"
             onClick={(e) => e.stopPropagation()}
             className="rounded-md border border-forest-300 bg-white px-3 py-1.5 text-sm font-semibold text-forest-800 transition-colors hover:bg-forest-50"
           >

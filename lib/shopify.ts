@@ -253,9 +253,15 @@ async function fetchLiveCatalog(): Promise<CatalogProduct[]> {
     const named = result.filter((p) => p !== samplesProduct);
     for (const p of products.find((x) => x.title.toLowerCase() === "samples")?.variants.edges ?? []) {
       const v = p.node;
-      const target = named.find((n) =>
-        v.title.toLowerCase().startsWith(n.title.toLowerCase().split(" ")[0])
-      );
+      // Match by containment, not just the product title's first word —
+      // "Koyo Hojicha"'s sample is titled "Hojicha (20g)" (its SECOND
+      // word), so a first-word-only prefix check silently drops it and
+      // Koyo Hojicha ends up with no sample variant/price at all in live
+      // mode. Confirmed live 2026-07-24: the sample variant itself already
+      // exists at the same ₱200 as every other product (SAM-KOY-0020) —
+      // this was purely a matching bug, not a Shopify data gap.
+      const sampleName = v.title.toLowerCase().replace(/\s*\(.*\)\s*$/, "").trim();
+      const target = named.find((n) => n.title.toLowerCase().includes(sampleName));
       if (target && !target.sample) {
         target.sample = {
           variantId: v.id,
@@ -454,6 +460,44 @@ export async function getCustomerDefaults(
     city: data.customer.defaultAddress?.city ?? undefined,
     province: data.customer.defaultAddress?.province ?? undefined,
   };
+}
+
+/**
+ * Full registered address, formatted for the invoice generator's
+ * "Registered Address" column — a single targeted query, not part of
+ * getCafeCustomers()'s bulk list (which only needs city, read every poll
+ * for the dropdown). Only called once, at invoice-generation time, for a
+ * customer with no existing Customer Profiles row.
+ */
+export async function getCustomerFullAddress(customerId: string): Promise<string | null> {
+  if (shopifyMode() === "snapshot" || customerId.startsWith("mock:")) return null;
+  const data = await adminGraphQL<{
+    customer: {
+      defaultAddress: {
+        address1: string | null;
+        address2: string | null;
+        city: string | null;
+        province: string | null;
+        zip: string | null;
+      } | null;
+    } | null;
+  }>(
+    `query($id: ID!) {
+      customer(id: $id) {
+        defaultAddress { address1 address2 city province zip }
+      }
+    }`,
+    { id: customerId }
+  );
+  const a = data.customer?.defaultAddress;
+  if (!a) return null;
+  const parts = [
+    a.address1,
+    a.address2,
+    a.city,
+    [a.province, a.zip].filter(Boolean).join(" ") || null,
+  ].filter((p): p is string => Boolean(p && p.trim()));
+  return parts.length > 0 ? parts.join(", ") : null;
 }
 
 /**
@@ -977,6 +1021,16 @@ export async function createDraftOrder(
 }
 
 /** Complete the draft and mark it paid (only after Joey confirms payment). */
+/** The real order display name (e.g. "#5367") — different numbering than the draft's own name. */
+export async function getOrderName(orderId: string): Promise<string | null> {
+  if (shopifyMode() === "snapshot" || orderId.startsWith("mock:")) return null;
+  const data = await adminGraphQL<{ order: { name: string } | null }>(
+    `query($id: ID!) { order(id: $id) { name } }`,
+    { id: orderId }
+  );
+  return data.order?.name ?? null;
+}
+
 export async function completeDraftAsPaid(order: Order): Promise<{ orderId: string }> {
   if (!order.shopifyDraftId) throw new Error("No draft to complete.");
 

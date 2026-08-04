@@ -94,10 +94,11 @@ admin blocks **domain-wide delegation** (ours did), that path is a dead
 end — there's no way around it as a non-admin. Instead, the app talks to a
 **Google Apps Script Web App** that you deploy under your own regular
 Google account. Apps Script runs with *your* normal permissions, so it can
-read/write the spreadsheet and search your Gmail with zero admin approval.
+read/write the spreadsheet with zero admin approval.
 
-This one deployment covers **both** the Sheets sync (step 2) and BPI email
-matching (step 5) — you only need to do this once.
+This deployment covers Sheets sync, invoice generation, and reading the
+shared BPI Transactions log (step 5) — it does **not** need Gmail access
+itself; that lives in a completely separate Apps Script project (see step 5).
 
 1. Go to **script.google.com** → **New project**.
 2. Delete the placeholder `Code.gs` content, and paste in the full contents
@@ -113,9 +114,9 @@ matching (step 5) — you only need to do this once.
 4. **Deploy → New deployment** → gear icon → type **Web app**:
    - Execute as: **Me**
    - Who has access: **Anyone**
-   - Deploy → it'll ask you to authorize access to Sheets/Gmail under your
-     own account → allow it (this is you granting the script access to
-     your own data, not a third party).
+   - Deploy → it'll ask you to authorize access to Sheets under your own
+     account → allow it (this is you granting the script access to your
+     own data, not a third party).
    - Copy the **Web app URL** (ends in `/exec`).
 5. In `.env.local`:
    ```
@@ -124,14 +125,8 @@ matching (step 5) — you only need to do this once.
    APPS_SCRIPT_SECRET=the-same-secret-you-put-in-SECRET_KEY
    ```
 
-**Important:** whichever Google account you're logged into when you deploy
-is the account the script acts as — both for writing to the spreadsheet
-*and* for BPI's Gmail search (step 5). If BPI transfer notifications land
-in a different inbox than the one you deploy from, BPI matching won't see
-them even though Sheets sync still works fine.
-
-**Whenever you edit `Code.gs`** (e.g. tuning the BPI regexes in step 5),
-you need to publish a **new version**: **Deploy → Manage deployments** →
+**Whenever you edit `Code.gs`** (e.g. adding a new action), you need to
+publish a **new version**: **Deploy → Manage deployments** →
 edit (pencil icon) → **Version: New version** → Deploy. Saving alone does
 not republish the live URL.
 
@@ -166,10 +161,10 @@ whenever you're ready, independently of each other:
 
 - **`ANTHROPIC_API_KEY`** — replaces the keyword/regex fallback parser with
   Claude for reading pasted messages. Get a key at console.anthropic.com.
-- **BPI email matching** — connects the real BPI notification mailbox
-  instead of the simulated inbox. Uses the same Apps Script deployment from
-  step 2 — see step 5 below for the mailbox-specific details (which account
-  to deploy from, and tuning the parsing regexes).
+- **BPI payment matching** — connects the real transaction log instead of
+  the simulated one. Needs a separate Apps Script project deployed under
+  whoever receives BPI transfer emails, plus this app's own bridge sharing
+  the transaction sheet — see step 5 below.
 - **Supabase** — DONE (2026-07-06). Orders, runtime customers, and the
   order-history mirror persist in Supabase whenever `SUPABASE_URL` +
   `SUPABASE_SECRET_KEY` are set (`lib/store.ts`). Tables were created from
@@ -179,37 +174,45 @@ whenever you're ready, independently of each other:
 
 ---
 
-## 5. BPI email matching — via the same Apps Script bridge
+## 5. BPI payment matching — via a shared transaction log, not live Gmail
 
-No IMAP, no mailbox password, no service account. The Apps Script deployed
-in step 2 reads Gmail using `GmailApp.search(...)`, which always searches
-**the mailbox of whichever Google account deployed the script** — that's
-Apps Script's own security model, not something this app configures.
+**Rewritten 2026-07-29.** The original approach (this same Apps Script
+project searching Gmail live on every check) had two real problems, found
+by verifying against 7 actual BPI notification emails: `GmailApp.search`
+returns *threads*, and BPI sends every notification with the same subject
+and no threading headers, so Gmail collapsed the whole payment history
+into one thread and the "recent only" filter did nothing; and the
+sender-name field it matched on doesn't exist in real BPI emails at all —
+neither format contains the payer's name, only a masked account number
+(InstaPay) or nothing (PESONet/EDPO).
 
-1. Decide which mailbox actually receives BPI transfer notifications (e.g.
-   `payments@ritualmatcha.ph`).
-2. If that's the **same** account you used to deploy in step 2, you're
-   already done — skip to the note below.
-3. If it's a **different** account, log into that account in the browser
-   and redeploy step 2's `Code.gs` from *that* account instead (Apps Script
-   projects are tied to whichever account created them). Update
-   `APPS_SCRIPT_URL`/`APPS_SCRIPT_SECRET` in `.env.local` if the URL
-   changes.
-4. Optionally set `BPI_EMAIL_QUERY` in `.env.local` to override the default
-   Gmail search (see `searchBpi()` in `Code.gs`) once you know BPI's exact
-   sender address or subject format.
+The current design is two separate pieces:
 
-**Heads up on parsing accuracy:** `Code.gs`'s `searchBpi()` searches with a
-broad, best-effort query and extracts amount/sender/reference with regexes
-based on typical PH bank transfer wording — **not verified against an
-actual BPI notification email**, since none was available while building
-this. Once real emails start landing, forward one (or paste the text) so
-the regexes in `Code.gs` can be tuned to BPI's exact format, then **publish
-a new Apps Script deployment version** (see step 2's note on this). Until
-then, expect some real transfers to come back as "no match" even though the
-email arrived — that's a parsing-accuracy gap, not a bug in the matching
-logic itself (`findMatch` in `lib/bpi.ts`, unchanged and already used by the
-simulated inbox).
+- **`scripts/apps-script/BpiMatching.gs`** — a completely separate Apps
+  Script project, deployed under whoever's Google account actually
+  receives BPI transfer emails (e.g. Marco). It has no web app deployment,
+  no secret key, and Order Desk never calls it directly — it just runs a
+  10-minute timer trigger that reads Gmail correctly (via the Gmail
+  advanced service, message-level not thread-level) and logs new
+  transactions into a shared "BPI Transactions" spreadsheet.
+- **This script (`Code.gs`)** reads that shared spreadsheet
+  (`BPI_TRANSACTIONS_SHEET_ID` near the top of the file — share the sheet
+  with this account as Editor) via `listBpiTransactions` and
+  `markBpiTransactionMatched`, which Order Desk's `lib/bpi.ts` calls
+  through the same bridge as everything else. No separate URL/secret is
+  needed on the Order Desk side for BPI at all.
+
+To set up the Gmail-reading side, see the setup instructions at the top of
+`scripts/apps-script/BpiMatching.gs` (needs the Gmail advanced service
+enabled and the manifest in `BpiMatching.appsscript.json`) — whoever
+deploys it just needs the shared sheet's ID, nothing from this app's own
+`.env.local`.
+
+Matching itself (`findMatch`/`otherCandidates` in `lib/bpi.ts`) is by
+amount + (InstaPay only) the sending account's last 4 digits — never a
+name. When there's no confident auto-match (a same-amount collision, or a
+PESONet transfer that carries no secondary signal at all), the payment
+pane shows a manual picker instead of blocking on it.
 
 ---
 
@@ -313,5 +316,4 @@ SUPABASE_SECRET_KEY=sb_secret_...
 # optional, later:
 ANTHROPIC_API_KEY=      # turns on Claude parsing + proof-screenshot reading
 FOLLOW_UP_DAYS=         # follow-up queue window, default 3
-BPI_EMAIL_QUERY=
 ```

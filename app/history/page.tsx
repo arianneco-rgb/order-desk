@@ -248,8 +248,6 @@ export default function HistoryPage() {
                     </p>
                     <a
                       href={`/invoice/${encodeURIComponent(row.orderId)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
                       className="mt-1 inline-block text-xs font-semibold text-forest-600 hover:text-forest-800 hover:underline"
                     >
                       View invoice
