@@ -1,5 +1,6 @@
 "use client";
 
+import { useVisibleInterval } from "@/lib/use-visible-interval";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { CatalogProduct, Order } from "@/lib/types";
@@ -117,6 +118,9 @@ export default function ProcessedPage() {
   // /api/orders the moment they're paid) so the row/pane stays put to copy from.
   const pinnedPaidRef = useRef<Set<string>>(new Set());
   const autoSelectedRef = useRef(false);
+  // Poll body, swapped in by the effect below; useVisibleInterval calls the
+  // latest one and stops entirely while the tab is hidden.
+  const tickRef = useRef<() => void>(() => {});
 
   const titles = useMemo(() => buildTitleMap(catalog), [catalog]);
   const sortedOrders = useMemo(
@@ -194,12 +198,13 @@ export default function ProcessedPage() {
       }
     }
     void tick();
-    const timer = setInterval(() => void tick(), POLL_MS);
+    tickRef.current = () => void tick();
     return () => {
       alive = false;
-      clearInterval(timer);
     };
   }, []);
+
+  useVisibleInterval(() => tickRef.current(), POLL_MS);
 
   // Auto-select the newest order once, on first load — same as before, so
   // the right pane isn't just an empty placeholder the moment you arrive.

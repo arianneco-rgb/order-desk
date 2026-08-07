@@ -86,6 +86,12 @@ const INVOICE_LEDGER_TAB = 'Invoice Ledger';
 // back to it).
 const BPI_TRANSACTIONS_SHEET_ID = '1wSjFC954T-GnnE7mr2tmcA7GoY2jDUqrCimEgapC-_M';
 const BPI_TRANSACTIONS_TAB = 'Transactions';
+/** Columns the Gmail-side script writes — Email ID … Warnings. */
+const BPI_TRANSACTIONS_COLUMNS = 14;
+/** Match Key is column B; claiming looks it up there rather than scanning every row. */
+const BPI_MATCH_KEY_COLUMN = 2;
+const BPI_MATCHED_ORDER_COLUMN = 12;
+const BPI_MATCHED_AT_COLUMN = 13;
 
 function doGet(e) {
   return handle(e);
@@ -230,28 +236,36 @@ function appendHistoryRow(row) {
   return { ok: true };
 }
 
+/**
+ * Finds a history row by Order Desk ID (column E) without reading the whole
+ * sheet — Order History only ever grows, and both callers below run on a
+ * user-facing click. Returns the 1-based row number, or 0 if not found.
+ */
+function findHistoryRow_(sheet, orderId) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+  const found = sheet
+    .getRange(2, 5, lastRow - 1, 1)
+    .createTextFinder(orderId)
+    .matchEntireCell(true)
+    .findNext();
+  return found ? found.getRow() : 0;
+}
+
 function setHistoryNote(orderId, note) {
   const sheet = getSheet(HISTORY_TAB);
-  const values = sheet.getDataRange().getValues();
-  for (let i = 1; i < values.length; i++) {
-    if (values[i][4] === orderId) {
-      sheet.getRange(i + 1, 8).setValue(note);
-      return { ok: true };
-    }
-  }
-  return { ok: false };
+  const row = findHistoryRow_(sheet, orderId);
+  if (!row) return { ok: false };
+  sheet.getRange(row, 8).setValue(note);
+  return { ok: true };
 }
 
 function deleteHistoryRow(orderId) {
   const sheet = getSheet(HISTORY_TAB);
-  const values = sheet.getDataRange().getValues();
-  for (let i = 1; i < values.length; i++) {
-    if (values[i][4] === orderId) {
-      sheet.deleteRow(i + 1);
-      return { ok: true };
-    }
-  }
-  return { ok: false };
+  const row = findHistoryRow_(sheet, orderId);
+  if (!row) return { ok: false };
+  sheet.deleteRow(row);
+  return { ok: true };
 }
 
 function toIso(v) {
@@ -274,12 +288,23 @@ function getBpiTransactionsSheet() {
   return sheet;
 }
 
+// How many of the most recent rows to return. The Gmail-side script appends,
+// so the newest transactions are always at the bottom. Reading the whole
+// sheet made every call slower as the log grew (it never shrinks) — and this
+// is polled every few seconds while an order is open. A payment older than
+// the last few hundred transactions is never the one being matched.
+const BPI_RECENT_ROWS = 300;
+
 // Column order written by the Gmail-side script's logBpiTransactionsToSheet().
 function listBpiTransactions() {
   const sheet = getBpiTransactionsSheet();
-  const values = sheet.getDataRange().getValues();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const startRow = Math.max(2, lastRow - BPI_RECENT_ROWS + 1);
+  const values = sheet
+    .getRange(startRow, 1, lastRow - startRow + 1, BPI_TRANSACTIONS_COLUMNS)
+    .getValues();
   return values
-    .slice(1)
     .filter(function (r) {
       return r[0];
     })
@@ -321,19 +346,30 @@ function markBpiTransactionMatched(matchKey, orderId) {
   lock.waitLock(30000);
   try {
     const sheet = getBpiTransactionsSheet();
-    const values = sheet.getDataRange().getValues();
-    for (let i = 1; i < values.length; i++) {
-      if (values[i][1] === matchKey) {
-        const existingOrderId = values[i][11];
-        if (existingOrderId && existingOrderId !== orderId) {
-          return { error: 'already_matched', matchedOrderId: existingOrderId };
-        }
-        sheet.getRange(i + 1, 12).setValue(orderId);
-        sheet.getRange(i + 1, 13).setValue(new Date().toISOString());
-        return { ok: true };
-      }
+    // Jump straight to the row via a column-scoped TextFinder instead of
+    // pulling the entire sheet into memory and looping. This runs while the
+    // script lock is held and sits on the critical path of "Confirm payment
+    // · mark paid", so its cost was the whole operation's cost — and it grew
+    // with every transaction ever logged.
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return { error: 'Transaction not found for matchKey: ' + matchKey };
+    const found = sheet
+      .getRange(2, BPI_MATCH_KEY_COLUMN, lastRow - 1, 1)
+      .createTextFinder(matchKey)
+      .matchEntireCell(true)
+      .findNext();
+    if (!found) return { error: 'Transaction not found for matchKey: ' + matchKey };
+
+    const row = found.getRow();
+    const existingOrderId = sheet.getRange(row, BPI_MATCHED_ORDER_COLUMN).getValue();
+    if (existingOrderId && existingOrderId !== orderId) {
+      return { error: 'already_matched', matchedOrderId: existingOrderId };
     }
-    return { error: 'Transaction not found for matchKey: ' + matchKey };
+    // One setValues call rather than two setValue round trips.
+    sheet
+      .getRange(row, BPI_MATCHED_ORDER_COLUMN, 1, 2)
+      .setValues([[orderId, new Date().toISOString()]]);
+    return { ok: true };
   } finally {
     lock.releaseLock();
   }

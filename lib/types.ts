@@ -88,7 +88,15 @@ export interface PaymentInfo {
 }
 
 /** Keys match DELIVERY_METHODS in lib/delivery.ts (labels + draft shipping line). */
-export type DeliveryMethod = "pickup" | "mm_delivery" | "jnt_nationwide";
+export type DeliveryMethod =
+  // The original three keys are kept (orders already in the database store
+  // them) — only their labels changed to the team's 2026-08 wording.
+  | "pickup"
+  | "mm_delivery"
+  | "jnt_nationwide"
+  | "wholesale_free"
+  | "jnt_super"
+  | "wholesale_bulk";
 
 export interface ManualDiscount {
   valueType: "FIXED_AMOUNT" | "PERCENTAGE";

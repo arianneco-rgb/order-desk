@@ -27,6 +27,7 @@ export function ClearAllModal({
   const [confirmText, setConfirmText] = useState("");
   const [running, setRunning] = useState(false);
   const [failures, setFailures] = useState<{ company: string; error: string }[]>([]);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
   const toast = useToast();
 
   const ready = confirmText.trim().toUpperCase() === "DELETE";
@@ -38,25 +39,60 @@ export function ClearAllModal({
     onClose();
   }
 
-  async function run() {
-    setRunning(true);
-    setFailures([]);
-    const failed: { company: string; error: string }[] = [];
-    let deleted = 0;
-    for (const order of orders) {
+  // Each delete is slow (a Shopify draft removal plus a Google Sheet write)
+  // and Google's bridge fails intermittently, so clearing a handful of
+  // orders one-at-a-time was both the slowest and the most failure-prone
+  // thing in the app — with N orders you get N chances to hit a blip.
+  // Running a few at a time cuts the wall-clock roughly threefold, and one
+  // retry absorbs the transient failures rather than reporting them at Joey.
+  const CONCURRENCY = 3;
+
+  async function deleteOne(order: { id: string; company: string }): Promise<void> {
+    for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const res = await fetch(`/api/orders/${order.id}`, { method: "DELETE" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        deleted++;
-        onOrderDeleted(order.id);
+        return;
       } catch (err) {
-        failed.push({
-          company: order.company,
-          error: err instanceof Error ? err.message : "Delete failed.",
-        });
+        // A 409 means the order is genuinely un-deletable (paid, or mid-update)
+        // — retrying just wastes time, so let it fail straight away.
+        const message = err instanceof Error ? err.message : "Delete failed.";
+        if (attempt === 2 || /permanent record|mid-update/i.test(message)) throw err;
+        await new Promise((r) => setTimeout(r, 500));
       }
     }
+  }
+
+  async function run() {
+    setRunning(true);
+    setFailures([]);
+    setProgress({ done: 0, total: orders.length });
+    const failed: { company: string; error: string }[] = [];
+    let deleted = 0;
+
+    const queue = [...orders];
+    async function worker() {
+      for (;;) {
+        const order = queue.shift();
+        if (!order) return;
+        try {
+          await deleteOne(order);
+          deleted++;
+          onOrderDeleted(order.id);
+        } catch (err) {
+          failed.push({
+            company: order.company,
+            error: err instanceof Error ? err.message : "Delete failed.",
+          });
+        }
+        setProgress((p) => ({ ...p, done: p.done + 1 }));
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, orders.length) }, () => worker())
+    );
+
     setRunning(false);
     setConfirmText("");
     if (failed.length === 0) {
@@ -119,7 +155,9 @@ export function ClearAllModal({
           disabled={!ready || running || orders.length === 0}
           className="rounded-md bg-red-700 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-red-800 disabled:opacity-50"
         >
-          {running ? "Deleting…" : `Delete all ${orders.length}`}
+          {running
+            ? `Deleting… ${progress.done}/${progress.total}`
+            : `Delete all ${orders.length}`}
         </button>
       </div>
     </Modal>

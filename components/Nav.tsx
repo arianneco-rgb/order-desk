@@ -22,7 +22,9 @@ interface Counts {
   history: number;
 }
 
-const COUNT_POLL_MS = 5000;
+// Nav badge counts are ambient information — they don't need to be fresher
+// than the pages themselves, and this fires on every page.
+const COUNT_POLL_MS = 15000;
 
 type IconName = "home" | "paste" | "queue" | "processed" | "history" | "analytics" | "reports" | "more";
 

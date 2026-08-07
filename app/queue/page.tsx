@@ -1,5 +1,6 @@
 "use client";
 
+import { useVisibleInterval } from "@/lib/use-visible-interval";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogProduct, Order } from "@/lib/types";
@@ -148,6 +149,9 @@ export default function QueuePage() {
   // Local overlay of just-mutated orders (id → freshest copy), so polls
   // within the grace window can't undo a PATCH/draft response.
   const overlayRef = useRef(new Map<string, { at: number; order: Order }>());
+  // Poll body, swapped in by the effect below; useVisibleInterval calls the
+  // latest one and stops entirely while the tab is hidden.
+  const pollRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     fetch("/api/catalog")
@@ -179,12 +183,13 @@ export default function QueuePage() {
     }
 
     poll();
-    const timer = setInterval(poll, POLL_MS);
+    pollRef.current = poll;
     return () => {
       cancelled = true;
-      clearInterval(timer);
     };
   }, []);
+
+  useVisibleInterval(() => pollRef.current(), POLL_MS);
 
   const handleOrderUpdate = useCallback((order: Order) => {
     overlayRef.current.set(order.id, { at: Date.now(), order });

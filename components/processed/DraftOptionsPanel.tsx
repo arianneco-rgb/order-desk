@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import clsx from "clsx";
 import type { DeliveryMethod, Order } from "@/lib/types";
-import { DELIVERY_METHODS } from "@/lib/delivery";
+import { DELIVERY_METHODS, defaultDeliveryFee } from "@/lib/delivery";
 import { formatPeso } from "@/lib/conversions";
 
 /** Title the server auto-applies this discount under — see lib/pipeline.ts. */
@@ -148,9 +148,22 @@ export function DraftOptionsPanel({
           <select
             value={opts.deliveryMethod ?? ""}
             disabled={busy}
-            onChange={(e) =>
-              void patch({ deliveryMethod: e.target.value === "" ? null : (e.target.value as DeliveryMethod) })
-            }
+            onChange={(e) => {
+              if (e.target.value === "") {
+                void patch({ deliveryMethod: null });
+                return;
+              }
+              const method = e.target.value as DeliveryMethod;
+              // Pre-fill the method's own default fee (₱200 for Metro Manila,
+              // ₱0 for the rest) — but never overwrite a fee Joey already
+              // typed for this order.
+              const fee = defaultDeliveryFee(method);
+              void patch(
+                opts.deliveryFee === undefined && fee > 0
+                  ? { deliveryMethod: method, deliveryFee: fee }
+                  : { deliveryMethod: method }
+              );
+            }}
             className={smallInput}
           >
             <option value="">— choose —</option>

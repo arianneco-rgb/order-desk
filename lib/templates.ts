@@ -88,11 +88,19 @@ Thank you! 🙂`,
   },
 ];
 
-/** DeliveryMethod (lib/delivery.ts) → the matching fulfilment template key. */
+/**
+ * DeliveryMethod (lib/delivery.ts) → the matching fulfilment template key.
+ * Several methods share a template: free Metro Manila delivery reads the
+ * same to the cafe as paid Metro Manila delivery, and every courier option
+ * uses the nationwide send-out message.
+ */
 const METHOD_TEMPLATE: Record<DeliveryMethod, string> = {
   pickup: "pickup",
   mm_delivery: "mm_delivery",
+  wholesale_free: "mm_delivery",
   jnt_nationwide: "nationwide",
+  jnt_super: "nationwide",
+  wholesale_bulk: "nationwide",
 };
 
 /**
@@ -107,7 +115,8 @@ export function fulfilmentReplyFor(
 ): FulfilmentTemplate | undefined {
   const template = FULFILMENT_TEMPLATES.find((t) => t.key === METHOD_TEMPLATE[method]);
   if (!template) return undefined;
-  if (method === "jnt_nationwide" && deliveryFee && deliveryFee > 0) {
+  // Only the nationwide template carries an "XX" shipping-fee blank.
+  if (METHOD_TEMPLATE[method] === "nationwide" && deliveryFee && deliveryFee > 0) {
     return { ...template, text: template.text.replace(/\bXX\b/, formatPeso(deliveryFee)) };
   }
   return template;

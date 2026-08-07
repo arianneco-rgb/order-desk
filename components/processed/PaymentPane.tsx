@@ -1,5 +1,6 @@
 "use client";
 
+import { useVisibleInterval } from "@/lib/use-visible-interval";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BpiMatch, Order, ProofOfPayment } from "@/lib/types";
 import { formatPeso } from "@/lib/conversions";
@@ -108,9 +109,14 @@ export function PaymentPane({
   useEffect(() => {
     if (!shouldPoll) return;
     void checkInbox();
-    const timer = setInterval(() => void checkInbox(), 5000);
-    return () => clearInterval(timer);
   }, [shouldPoll, checkInbox]);
+  // 8s rather than 5s, and paused while the tab is hidden: this poll reads
+  // the BPI Transactions sheet through Apps Script, which is the slowest and
+  // flakiest call the app makes. A transfer that hasn't landed yet won't
+  // land three seconds sooner for being asked more often.
+  useVisibleInterval(() => {
+    if (shouldPoll) void checkInbox();
+  }, 8000);
 
   function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
