@@ -119,3 +119,50 @@ body {
   .dark .bg-indigo-100 { background-color: #262a52 !important; }
   .dark .text-indigo-800 { color: #b9bdf0 !important; }
 }
+
+/* ── Print / Save-as-PDF ────────────────────────────────────────────────
+   Invoices are produced by the browser's own print dialog (there's no PDF
+   library). By default browsers drop background colours when printing to
+   save ink, which stripped the forest-green table header and the footer
+   bar off every saved invoice — the printed copy no longer matched the
+   template. These rules keep the brand colours in the PDF, and force the
+   invoice itself out of dark mode so a user with dark mode on doesn't
+   print a black page. */
+@media print {
+  /* Standards property first, then the WebKit prefix Safari still needs. */
+  *,
+  *::before,
+  *::after {
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  /* The page ground must be plain white regardless of theme. */
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  /* Dark mode is a screen preference — an invoice is a document. Undo the
+     dark overrides above for the printed copy only. */
+  .dark body,
+  .dark input,
+  .dark textarea,
+  .dark select {
+    background-color: #fff !important;
+    color: #000 !important;
+  }
+
+  /* Don't split a row or the totals block across two pages. */
+  tr,
+  thead,
+  tfoot {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Chrome adds page margins on top of the invoice's own padding. */
+  @page {
+    margin: 12mm;
+  }
+}
