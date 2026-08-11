@@ -23,6 +23,7 @@
 import { bpiMode } from "./config";
 import { listActiveOrders } from "./store";
 import { callAppsScript } from "./apps-script";
+import { cached, invalidate, CACHE_KEYS } from "./shared-cache";
 import type { BpiMatch, Order } from "./types";
 
 export interface BpiTransaction {
@@ -193,19 +194,19 @@ export function otherCandidates(
 // polls this every 5s per open order and the sheet itself only changes on
 // a ~10 minute timer.
 
-const TRANSACTIONS_CACHE_MS = 15_000;
-declare global {
-  // eslint-disable-next-line no-var
-  var __odBpiTransactionsCache: { at: number; transactions: BpiTransaction[] } | undefined;
-}
+// Longer than it looks: the Gmail-side script only writes to the sheet every
+// 10 minutes, so a 15s cache was re-reading the same rows ~40 times between
+// updates. This is the app's slowest endpoint (median 1.8s, peaks near 3.7s)
+// AND its most frequent — the payment pane polls it every 8s per open order.
+// 60s shared across instances still surfaces a new payment well inside the
+// 10-minute write cycle.
+const TRANSACTIONS_CACHE_MS = 60_000;
 
 async function fetchTransactions(): Promise<BpiTransaction[]> {
-  const cached = globalThis.__odBpiTransactionsCache;
-  if (cached && Date.now() - cached.at < TRANSACTIONS_CACHE_MS) return cached.transactions;
-
-  const data = await callAppsScript<{ transactions: BpiTransaction[] }>("listBpiTransactions");
-  globalThis.__odBpiTransactionsCache = { at: Date.now(), transactions: data.transactions };
-  return data.transactions;
+  return cached(CACHE_KEYS.bpiTransactions, TRANSACTIONS_CACHE_MS, async () => {
+    const data = await callAppsScript<{ transactions: BpiTransaction[] }>("listBpiTransactions");
+    return data.transactions;
+  });
 }
 
 export interface BpiLookup {
@@ -260,5 +261,9 @@ export async function claimTransaction(
     return { ok: false, error: `This transaction was already applied to order ${result.matchedOrderId}.` };
   }
   if (result.error) return { ok: false, error: result.error };
+  // The sheet now says this row belongs to an order. Drop the cached copy so
+  // a claimed payment can't keep being offered to other same-amount orders
+  // for the rest of the TTL.
+  await invalidate(CACHE_KEYS.bpiTransactions);
   return { ok: true };
 }

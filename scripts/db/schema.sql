@@ -64,3 +64,18 @@ alter table runtime_customers enable row level security;
 alter table order_history enable row level security;
 alter table app_settings enable row level security;
 alter table sample_credits enable row level security;
+
+-- Shared read-through cache. The app previously cached the customer list,
+-- the BPI transaction log and the Shopify catalog in `globalThis` — memory
+-- local to ONE serverless instance. Vercel runs many, and routes each
+-- request to whichever is free, so the same click was fast or slow purely
+-- on which instance it landed on: /api/customers measured 513ms on a warm
+-- instance and 3528ms on a cold one, with no pattern the user could see.
+-- Instances are also recycled constantly, so a "5 minute" cache often died
+-- far sooner. One shared row means one warm cache for everyone.
+create table if not exists app_cache (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz not null default now()
+);
+alter table app_cache enable row level security;

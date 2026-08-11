@@ -7,10 +7,18 @@ import { formatPeso } from "@/lib/conversions";
 import { CopyButton } from "@/components/CopyButton";
 import { TestBadge } from "@/components/TestBadge";
 import { Modal } from "@/components/Modal";
+import { StagedProgress, Spinner } from "@/components/StagedProgress";
 import { FULFILMENT_TEMPLATES, fulfilmentReplyFor } from "@/lib/templates";
 import { formatTime } from "./format";
 
 const LARGE_PAYMENT_THRESHOLD = 100000;
+
+/** Server order of confirm-payment, with measured typical durations. */
+const CONFIRM_STEPS = [
+  { label: "Claiming the payment…", ms: 1800 },
+  { label: "Marking the order paid in Shopify…", ms: 2200 },
+  { label: "Recording it — almost there…", ms: 1200 },
+];
 
 /** Right pane: proof upload → BPI match → confirm payment → paid replies. */
 export function PaymentPane({
@@ -473,10 +481,21 @@ export function PaymentPane({
               type="button"
               onClick={confirmPayment}
               disabled={confirming || (!match && !manualOverride)}
-              className="mt-3 w-full rounded-md bg-forest-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-forest-800 disabled:opacity-50"
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-md bg-forest-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-forest-800 disabled:opacity-50"
             >
+              {confirming && <Spinner className="h-4 w-4 text-white" />}
               {confirming ? "Confirming…" : "✓ Confirm payment · mark paid"}
             </button>
+            {confirming && (
+              // Marking paid is three external round trips (claim the payment
+              // in the sheet, complete the Shopify draft, record it), so it's
+              // the longest wait in the app. Naming the step in flight makes
+              // the wait legible instead of an unexplained frozen button.
+              <StagedProgress
+                className="mt-2"
+                steps={CONFIRM_STEPS}
+              />
+            )}
           </div>
 
           {error && (

@@ -1,5 +1,6 @@
 "use client";
 
+import { Spinner } from "@/components/StagedProgress";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import type { CafeCustomer } from "@/lib/types";
@@ -272,11 +273,30 @@ export function CafePicker({
               <ul className="max-h-72 overflow-y-auto py-1">
                 {matches.length === 0 ? (
                   <li className="px-3 py-2 text-sm text-forest-500">
-                    {!loaded
-                      ? "Loading cafes…"
-                      : query.trim()
-                        ? `No cafes match “${query.trim()}”.`
-                        : "No cafes yet."}
+                    {!loaded ? (
+                      // The cafe list comes from the Google Sheet and can take
+                      // a few seconds on a cold cache. Skeleton rows show the
+                      // shape of what's coming, so the dropdown reads as
+                      // filling in rather than empty and broken.
+                      <span className="flex flex-col gap-2" aria-label="Loading cafes">
+                        <span className="flex items-center gap-2 text-forest-600">
+                          <Spinner className="h-3.5 w-3.5" />
+                          Loading cafes…
+                        </span>
+                        {[0, 1, 2].map((i) => (
+                          <span key={i} className="flex flex-col gap-1">
+                            <span
+                              className="h-3 animate-pulse rounded bg-forest-100"
+                              style={{ width: `${70 - i * 12}%` }}
+                            />
+                          </span>
+                        ))}
+                      </span>
+                    ) : query.trim() ? (
+                      `No cafes match “${query.trim()}”.`
+                    ) : (
+                      "No cafes yet."
+                    )}
                   </li>
                 ) : (
                   matches.map((cafe, i) => (

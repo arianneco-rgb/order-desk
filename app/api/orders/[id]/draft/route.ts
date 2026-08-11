@@ -20,6 +20,13 @@ export async function POST(
     );
   }
   try {
+    // The catalog is needed to price the lines, and it doesn't depend on the
+    // order — so fetch it alongside the order lookup rather than after it.
+    // (It can't move past createDraftOrder here: the line items are built
+    // from it. That's a real dependency, unlike in confirm-payment.)
+    const catalogPromise = getCatalog();
+    catalogPromise.catch(() => {}); // real await below rethrows
+
     const order = await getOrder(params.id);
     if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
     if (order.status !== "processed") {
@@ -35,7 +42,7 @@ export async function POST(
       );
     }
 
-    const catalog = await getCatalog();
+    const catalog = await catalogPromise;
     const priced = priceItems(order.items, catalog);
     const lineItems = buildDraftLineItems(priced, catalog);
     const draft = await createDraftOrder(order, lineItems);

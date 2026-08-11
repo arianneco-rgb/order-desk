@@ -50,10 +50,21 @@ export async function POST(
       );
     }
 
+    // The catalog is only needed at the end (to render the items line on the
+    // paid reply) and depends on nothing here, so start fetching it now and
+    // collect it later. It used to run *after* the Shopify call, adding its
+    // latency to a chain of external round trips that already had three.
+    const catalogPromise = getCatalog();
+    // Swallow here so a rejection can't surface as an unhandled rejection
+    // while we're awaiting the Shopify call; the real await below rethrows.
+    catalogPromise.catch(() => {});
+
     // Claim the transaction row NOW, before touching Shopify — this is the
     // actual dedupe that stops the same payment being applied to two
     // different orders (a candidate can be shown to several same-amount
-    // orders at preview time; only one can win the claim here).
+    // orders at preview time; only one can win the claim here). This must
+    // stay sequential: claiming after Shopify would let a double-submit mark
+    // two orders paid against one transfer.
     if (order.payment.bpiMatch) {
       const claim = await claimTransaction(order, order.payment.bpiMatch.matchKey);
       if (!claim.ok) {
@@ -62,7 +73,7 @@ export async function POST(
     }
 
     const { orderId } = await completeDraftAsPaid(order);
-    const catalog = await getCatalog();
+    const catalog = await catalogPromise;
     const priced = priceItems(order.items, catalog);
     const items = itemsText(priced);
 

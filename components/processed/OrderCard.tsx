@@ -13,6 +13,14 @@ import { TestBadge } from "@/components/TestBadge";
 import { Modal } from "@/components/Modal";
 import { useToast } from "@/components/Toast";
 import { DELIVERY_METHODS } from "@/lib/delivery";
+import { StagedProgress, Spinner } from "@/components/StagedProgress";
+
+/** Server order of draft creation, with measured typical durations. */
+const DRAFT_STEPS = [
+  { label: "Pricing the order…", ms: 900 },
+  { label: "Creating the draft in Shopify…", ms: 2400 },
+  { label: "Saving — almost there…", ms: 900 },
+];
 import { DraftOptionsPanel } from "./DraftOptionsPanel";
 import { LineItemEditor } from "./LineItemEditor";
 import {
@@ -312,8 +320,9 @@ export function OrderCard({
             type="button"
             onClick={openPreview}
             disabled={draftBusy || order.items.length === 0}
-            className="rounded-md bg-forest-700 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-forest-800 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-md bg-forest-700 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-forest-800 disabled:opacity-50"
           >
+            {draftBusy && <Spinner className="h-4 w-4 text-white" />}
             {draftBusy ? "Creating draft…" : "Confirm · create draft"}
           </button>
         )}
@@ -424,11 +433,13 @@ export function OrderCard({
               type="button"
               onClick={() => void createDraft()}
               disabled={draftBusy || order.items.length === 0}
-              className="rounded-md bg-forest-700 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-forest-800 disabled:opacity-50"
+              className="flex items-center gap-2 rounded-md bg-forest-700 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-forest-800 disabled:opacity-50"
             >
+              {draftBusy && <Spinner className="h-4 w-4 text-white" />}
               {draftBusy ? "Creating draft…" : "Confirm · create draft"}
             </button>
           </div>
+          {draftBusy && <StagedProgress className="mt-3" steps={DRAFT_STEPS} />}
         </Modal>
 
         <Modal open={deleteOpen} onClose={() => setDeleteOpen(false)} title="Delete this order?">
