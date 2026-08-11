@@ -10,3 +10,6 @@ next-env.d.ts
 data/runtime/
 .vercel
 .env*
+
+# Filled-in Apps Script copy — carries APPS_SCRIPT_SECRET, never commit.
+CODE-GS-READY-TO-PASTE.gs

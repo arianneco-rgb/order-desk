@@ -110,6 +110,23 @@ export default function ReportsPage() {
 
   const topProducts = useMemo(() => (report?.topProducts ?? []).slice(0, 8), [report]);
   const topCafes = useMemo(() => (report?.cafeStats ?? []).slice(0, 8), [report]);
+
+  // Per-cafe breakdown is paged — the wholesale list runs to hundreds of
+  // rows, which buried the order list underneath it.
+  const CAFES_PER_PAGE = 25;
+  const [cafePage, setCafePage] = useState(0);
+  const cafeStats = report?.cafeStats ?? [];
+  const cafePageCount = Math.max(1, Math.ceil(cafeStats.length / CAFES_PER_PAGE));
+  // Re-running the report (new dates/segment/cafe) gives a different list, so
+  // a page number carried over from the old one could land out of range.
+  useEffect(() => {
+    setCafePage(0);
+  }, [report]);
+  const cafePageStart = Math.min(cafePage, cafePageCount - 1) * CAFES_PER_PAGE;
+  const pagedCafeStats = useMemo(
+    () => cafeStats.slice(cafePageStart, cafePageStart + CAFES_PER_PAGE),
+    [cafeStats, cafePageStart]
+  );
   const productRevenue = useMemo(
     () => (report?.topProducts ?? []).reduce((s, p) => s + p.revenue, 0),
     [report]
@@ -382,7 +399,12 @@ export default function ReportsPage() {
             {/* Cafe table */}
             {cafe === ALL_CAFES && report.cafeStats.length > 0 && (
               <div className="mt-4 rounded-xl border border-forest-200 bg-white p-5 shadow-sm">
-                <h2 className="text-base font-semibold text-forest-900">Per-cafe breakdown</h2>
+                <h2 className="text-base font-semibold text-forest-900">
+                  Per-cafe breakdown{" "}
+                  <span className="text-sm font-normal text-forest-500">
+                    ({report.cafeStats.length})
+                  </span>
+                </h2>
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full min-w-[480px] text-sm">
                     <thead>
@@ -394,8 +416,20 @@ export default function ReportsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {report.cafeStats.map((c) => (
-                        <tr key={c.name} className="border-b border-forest-100 text-forest-900 last:border-0">
+                      {/* Every row is rendered; the ones outside the current
+                          page are hidden on screen only. Slicing the array
+                          instead would drop them from the printed PDF, and a
+                          report that silently omits cafes is worse than a
+                          long one. */}
+                      {cafeStats.map((c, i) => (
+                        <tr
+                          key={c.name}
+                          className={`border-b border-forest-100 text-forest-900 last:border-0 ${
+                            i >= cafePageStart && i < cafePageStart + CAFES_PER_PAGE
+                              ? ""
+                              : "hidden print:table-row"
+                          }`}
+                        >
                           <td className="py-2 pr-3 whitespace-nowrap">
                             {c.name}
                             {report.newCafes.includes(c.name) && (
@@ -412,6 +446,37 @@ export default function ReportsPage() {
                     </tbody>
                   </table>
                 </div>
+                {cafePageCount > 1 && (
+                  // Hidden in print: a PDF of the report should contain every
+                  // cafe, not just whichever page happened to be on screen.
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-forest-100 pt-3 print:hidden">
+                    <p className="text-xs text-forest-500">
+                      Showing {cafePageStart + 1}–{cafePageStart + pagedCafeStats.length} of{" "}
+                      {report.cafeStats.length}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setCafePage((p) => Math.max(0, p - 1))}
+                        disabled={cafePage === 0}
+                        className="rounded-md border border-forest-300 bg-white px-2.5 py-1 text-xs font-semibold text-forest-800 transition-colors hover:bg-forest-50 disabled:opacity-40"
+                      >
+                        ← Previous
+                      </button>
+                      <span className="text-xs tabular-nums text-forest-600">
+                        Page {cafePage + 1} of {cafePageCount}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setCafePage((p) => Math.min(cafePageCount - 1, p + 1))}
+                        disabled={cafePage >= cafePageCount - 1}
+                        className="rounded-md border border-forest-300 bg-white px-2.5 py-1 text-xs font-semibold text-forest-800 transition-colors hover:bg-forest-50 disabled:opacity-40"
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
