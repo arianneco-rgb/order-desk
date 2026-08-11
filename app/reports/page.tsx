@@ -8,7 +8,6 @@ import { SkeletonLines, SkeletonCard } from "@/components/Skeleton";
 import { compactPeso, HBars, StatCard, TimeBars } from "@/components/reports/charts";
 
 const ALL_CAFES = "All cafes";
-const MAX_TABLE_ROWS = 200;
 
 function formatInputDate(d: Date): string {
   const y = d.getFullYear();
@@ -127,6 +126,17 @@ export default function ReportsPage() {
     () => cafeStats.slice(cafePageStart, cafePageStart + CAFES_PER_PAGE),
     [cafeStats, cafePageStart]
   );
+
+  // Orders in range, paged the same way. This replaces a hard 200-row cap
+  // that truncated the list outright — every order is now reachable.
+  const ORDERS_PER_PAGE = 25;
+  const [orderPage, setOrderPage] = useState(0);
+  const orderRowCount = report?.rows.length ?? 0;
+  const orderPageCount = Math.max(1, Math.ceil(orderRowCount / ORDERS_PER_PAGE));
+  useEffect(() => {
+    setOrderPage(0);
+  }, [report]);
+  const orderPageStart = Math.min(orderPage, orderPageCount - 1) * ORDERS_PER_PAGE;
   const productRevenue = useMemo(
     () => (report?.topProducts ?? []).reduce((s, p) => s + p.revenue, 0),
     [report]
@@ -503,8 +513,18 @@ export default function ReportsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {report.rows.slice(0, MAX_TABLE_ROWS).map((row) => (
-                        <tr key={`${row.ref}-${row.date}`} className="border-b border-forest-100 text-forest-900 last:border-0">
+                      {/* Same approach as the per-cafe table: render every
+                          row, hide the off-page ones on screen only, so the
+                          PDF still contains the full list. */}
+                      {report.rows.map((row, i) => (
+                        <tr
+                          key={`${row.ref}-${row.date}`}
+                          className={`border-b border-forest-100 text-forest-900 last:border-0 ${
+                            i >= orderPageStart && i < orderPageStart + ORDERS_PER_PAGE
+                              ? ""
+                              : "hidden print:table-row"
+                          }`}
+                        >
                           <td className="py-2 pr-3 whitespace-nowrap">{formatRowDate(row.date)}</td>
                           <td className="py-2 pr-3 whitespace-nowrap text-forest-600">{row.ref}</td>
                           <td className="py-2 pr-3 whitespace-nowrap">{row.cafe}</td>
@@ -514,11 +534,37 @@ export default function ReportsPage() {
                       ))}
                     </tbody>
                   </table>
-                  {report.rows.length > MAX_TABLE_ROWS && (
-                    <p className="mt-2 text-xs text-forest-500">
-                      Showing the first {MAX_TABLE_ROWS} of {report.rows.length} orders — totals
-                      above still cover everything.
-                    </p>
+                  {orderPageCount > 1 && (
+                    // Hidden in print: the PDF carries every row, so a page
+                    // number would be meaningless there.
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-forest-100 pt-3 print:hidden">
+                      <p className="text-xs text-forest-500">
+                        Showing {orderPageStart + 1}–
+                        {Math.min(orderPageStart + ORDERS_PER_PAGE, report.rows.length)} of{" "}
+                        {report.rows.length}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setOrderPage((p) => Math.max(0, p - 1))}
+                          disabled={orderPage === 0}
+                          className="rounded-md border border-forest-300 bg-white px-2.5 py-1 text-xs font-semibold text-forest-800 transition-colors hover:bg-forest-50 disabled:opacity-40"
+                        >
+                          ← Previous
+                        </button>
+                        <span className="text-xs tabular-nums text-forest-600">
+                          Page {orderPage + 1} of {orderPageCount}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setOrderPage((p) => Math.min(orderPageCount - 1, p + 1))}
+                          disabled={orderPage >= orderPageCount - 1}
+                          className="rounded-md border border-forest-300 bg-white px-2.5 py-1 text-xs font-semibold text-forest-800 transition-colors hover:bg-forest-50 disabled:opacity-40"
+                        >
+                          Next →
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}
