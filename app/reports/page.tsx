@@ -9,6 +9,9 @@ import { compactPeso, HBars, StatCard, TimeBars } from "@/components/reports/cha
 
 const ALL_CAFES = "All cafes";
 
+/** Hard ceiling on rows rendered in the orders table — see cappedRows below. */
+const MAX_TABLE_ROWS = 200;
+
 function formatInputDate(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -127,11 +130,18 @@ export default function ReportsPage() {
     [cafeStats, cafePageStart]
   );
 
-  // Orders in range, paged the same way. This replaces a hard 200-row cap
-  // that truncated the list outright — every order is now reachable.
+  // Orders in range, paged the same way — but only over the first
+  // MAX_TABLE_ROWS. Pagination hides rows visually; they're all still in the
+  // DOM so the PDF stays complete, and a wide range can return hundreds of
+  // orders. Capping what's rendered keeps the page light. The headline
+  // totals are computed server-side over the full range regardless.
   const ORDERS_PER_PAGE = 25;
   const [orderPage, setOrderPage] = useState(0);
-  const orderRowCount = report?.rows.length ?? 0;
+  const cappedRows = useMemo(
+    () => (report?.rows ?? []).slice(0, MAX_TABLE_ROWS),
+    [report]
+  );
+  const orderRowCount = cappedRows.length;
   const orderPageCount = Math.max(1, Math.ceil(orderRowCount / ORDERS_PER_PAGE));
   useEffect(() => {
     setOrderPage(0);
@@ -516,7 +526,7 @@ export default function ReportsPage() {
                       {/* Same approach as the per-cafe table: render every
                           row, hide the off-page ones on screen only, so the
                           PDF still contains the full list. */}
-                      {report.rows.map((row, i) => (
+                      {cappedRows.map((row, i) => (
                         <tr
                           key={`${row.ref}-${row.date}`}
                           className={`border-b border-forest-100 text-forest-900 last:border-0 ${
@@ -534,14 +544,20 @@ export default function ReportsPage() {
                       ))}
                     </tbody>
                   </table>
+                  {report.rows.length > MAX_TABLE_ROWS && (
+                    <p className="mt-2 text-xs text-forest-500">
+                      Showing the first {MAX_TABLE_ROWS} of {report.rows.length} orders — totals
+                      above still cover everything.
+                    </p>
+                  )}
                   {orderPageCount > 1 && (
                     // Hidden in print: the PDF carries every row, so a page
                     // number would be meaningless there.
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-forest-100 pt-3 print:hidden">
                       <p className="text-xs text-forest-500">
                         Showing {orderPageStart + 1}–
-                        {Math.min(orderPageStart + ORDERS_PER_PAGE, report.rows.length)} of{" "}
-                        {report.rows.length}
+                        {Math.min(orderPageStart + ORDERS_PER_PAGE, orderRowCount)} of{" "}
+                        {orderRowCount}
                       </p>
                       <div className="flex items-center gap-2">
                         <button
