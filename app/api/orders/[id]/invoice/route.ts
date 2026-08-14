@@ -13,7 +13,15 @@ import { getOrder, saveOrder, tryLockOrder, unlockOrder } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
-const PREPARERS = ["Marco", "Joey", "Jericho", "Raf"];
+// Full legal names — an invoice is a document a customer files, so the
+// "Prepared by" line carries the person's full name rather than the
+// first-name shorthand the team uses internally.
+const PREPARERS = [
+  "Josephine Abesamis",
+  "Jericho Manuel Liao IV",
+  "Alfonso Rafael Noel",
+  "Marco Antonio Adriano",
+];
 
 async function buildPreview(orderId: string) {
   const order = await getOrder(orderId);

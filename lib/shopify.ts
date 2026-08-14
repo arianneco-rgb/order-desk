@@ -887,7 +887,9 @@ function buildDraftOrderInput(
       "Order Desk",
       order.company,
       ...(delivery ? [`Delivery: ${delivery.label}`] : []),
-    ],
+    ]
+      .map(shopifyTag)
+      .filter(Boolean),
     useCustomerDefaultAddress: true,
     // The VAT tickbox IS the tax-exempt flag — Joey's choice always
     // overrides the customer's own default tax setting for this draft.
@@ -906,6 +908,30 @@ function buildDraftOrderInput(
       ? { shippingLine: { title: delivery.label, price: opts.deliveryFee ?? 0 } }
       : {}),
   };
+}
+
+/**
+ * Shopify rejects the whole draftOrderCreate mutation if any tag exceeds 40
+ * characters — "Title Tag exceeds the maximum length of 40 characters" — so
+ * a long cafe name blocked the order entirely (e.g. "Cafe Gervacios -
+ * Pastry and Coffee in Davao City", 48 chars). Tags exist for filtering in
+ * Shopify admin, and the draft's note carries the full company name, so
+ * trimming here loses nothing that isn't recorded elsewhere.
+ *
+ * Commas are stripped too: Shopify treats a comma as a tag separator, so a
+ * name like "Rebel Coffee Roasters, OPC" would silently split into two tags.
+ */
+export function shopifyTag(raw: string): string {
+  const clean = String(raw ?? "")
+    .replace(/,/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (clean.length <= 40) return clean;
+  // Cut on a word boundary when one is close to the limit, so the tag reads
+  // as a truncated name rather than a word sliced mid-syllable.
+  const cut = clean.slice(0, 40);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > 30 ? cut.slice(0, lastSpace) : cut).trim();
 }
 
 interface CalculatedMoney {
