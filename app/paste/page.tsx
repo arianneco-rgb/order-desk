@@ -133,8 +133,8 @@ export default function PastePage() {
         {(
           [
             { key: "existing", label: "Existing cafe" },
-            { key: "new", label: "New customer" },
             { key: "build", label: "Build order" },
+            { key: "new", label: "New customer" },
           ] as const
         ).map((tab) => (
           <button
