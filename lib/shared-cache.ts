@@ -108,7 +108,11 @@ export async function invalidate(key: string): Promise<void> {
   }
 }
 
+// Version the key whenever the cached VALUE's shape changes. The customer
+// list gained `addresses` and `isWholesale`, and its source moved from the
+// Google Sheet to Shopify — an entry written by the old code would still be
+// served under the old key, silently defeating the change.
 export const CACHE_KEYS = {
-  sheetCustomers: "sheet_customers",
+  sheetCustomers: "shopify_customers_v3",
   bpiTransactions: "bpi_transactions",
 } as const;

@@ -31,7 +31,11 @@ function mirrorToSheet(action: string, body: Record<string, unknown>, what: stri
 
 // ── Customers ────────────────────────────────────────────────────────────
 
-const CUSTOMERS_CACHE_MS = 5 * 60_000;
+// 30 minutes, not 5: the full Shopify customer fetch is ~8s over 8 pages,
+// and the cafe list changes rarely (a new cafe is added days apart, and
+// adding one through the app primes this cache directly). Paying 8s every
+// 5 minutes for data that barely moves is the wrong trade.
+const CUSTOMERS_CACHE_MS = 30 * 60_000;
 
 /** Overwrite the Customers tab with the current Shopify wholesale list. */
 export async function syncCustomersToSheet(): Promise<{ count: number }> {
@@ -53,17 +57,18 @@ export async function syncCustomersToSheet(): Promise<{ count: number }> {
 export async function listSheetCustomers(): Promise<CafeCustomer[]> {
   if (sheetsMode() === "mock") return getCafeCustomers();
 
-  return cached(CACHE_KEYS.sheetCustomers, CUSTOMERS_CACHE_MS, async () => {
-    const data = await callAppsScript<{ customers: CafeCustomer[] }>("listCustomers");
-    // An empty tab (first run) self-heals by syncing from Shopify. Return the
-    // Shopify list directly rather than re-reading the tab we just wrote.
-    if (data.customers.length === 0) {
-      const customers = await getCafeCustomers();
-      await callAppsScript("syncCustomers", { customers }).catch(() => {});
-      return customers;
-    }
-    return data.customers;
-  });
+  // Reads SHOPIFY, not the Customers tab. The tab only carries name/contact/
+  // email/phone/city — no tags and no address book — so serving the picker
+  // from it made two things impossible: customers tagged something other
+  // than "wholesale" were invisible (Jerico Ondoy and Jane Degulacion are
+  // tagged only "Invoice Requested"), and the branch picker had no
+  // addresses to offer. Shopify is the source of truth for both.
+  //
+  // The full fetch is ~8.7s over 19 pages, so it leans on the shared cache:
+  // that cost lands roughly once per TTL across the whole deployment, not
+  // per search. The Customers tab stays as the human-readable mirror it was
+  // always meant to be.
+  return cached(CACHE_KEYS.sheetCustomers, CUSTOMERS_CACHE_MS, () => getCafeCustomers());
 }
 
 // ── Order history ────────────────────────────────────────────────────────

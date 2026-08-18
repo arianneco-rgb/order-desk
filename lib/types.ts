@@ -10,7 +10,12 @@ export type OrderStatus =
   | "paid";
 
 /** pouch = 200g wholesale pouch (10 per case). sample = 20g sample sachet. */
-export type ItemForm = "pouch" | "sample";
+/**
+ * How a line is counted. "piece" covers non-matcha goods (whisk sets,
+ * starter kits) sold as whole units — they carry no weight, so they're
+ * excluded from kg totals and the 2kg MOQ check.
+ */
+export type ItemForm = "pouch" | "sample" | "piece";
 
 export interface OrderItem {
   productKey: string;
@@ -198,6 +203,33 @@ export interface Order {
   invoicePoNo?: string;
   /** The real Shopify order name (e.g. "#5358") at generation time — locked in so it never has to be re-fetched. */
   invoiceOrderNo?: string;
+  /**
+   * Which branch this order ships to, chosen from the cafe's Shopify address
+   * book. 251 of 1,872 customers have more than one, and the branch decides
+   * the delivery method — so it can't be left implicit.
+   */
+  shippingAddress?: string;
+  /**
+   * Created through the Build order screen and marked paid in one step,
+   * without a BPI match. Recorded so these are identifiable later — they
+   * skip the draft/payment review the rest of the app is built around.
+   */
+  fastTracked?: boolean;
+}
+
+/** One branch/address from the Shopify customer's address book. */
+export interface CafeAddress {
+  id: string;
+  /** Single-line display, e.g. "The Kind Cookie, 102 Valero, Makati City". */
+  label: string;
+  company?: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  province?: string;
+  zip?: string;
+  /** No street line — a province/region stub, not a usable delivery address. */
+  isStub: boolean;
 }
 
 export interface CafeCustomer {
@@ -214,6 +246,10 @@ export interface CafeCustomer {
    * this is undefined/empty when running without SHOPIFY_ADMIN_TOKEN.
    */
   tags?: string[];
+  /** True when tagged "wholesale" — these sort to the top of the picker. */
+  isWholesale?: boolean;
+  /** Every branch on the Shopify record, deduped (live mode only). */
+  addresses?: CafeAddress[];
 }
 
 export interface VariantRef {
@@ -237,6 +273,10 @@ export interface CatalogProduct {
   kilo?: VariantRef;
   /** 20g sample sachet variant (50g for Mitsu). */
   sample?: VariantRef;
+  /** Sold by the piece — whisk sets, starter kits, retail bundles. */
+  piece?: VariantRef;
+  /** True when the product has no matcha weight (excluded from kg/MOQ maths). */
+  nonMatcha?: boolean;
 }
 
 export interface OrderHistoryRow {

@@ -1,5 +1,6 @@
 "use client";
 
+import { BuildOrder } from "@/components/paste/BuildOrder";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
@@ -9,7 +10,7 @@ import { CafeOrderHistory } from "@/components/paste/CafeOrderHistory";
 import { NewCustomerPanel } from "@/components/paste/NewCustomerPanel";
 import { Kbd, isMac } from "@/components/Kbd";
 
-type PasteMode = "existing" | "new";
+type PasteMode = "existing" | "new" | "build";
 
 export default function PastePage() {
   const [mode, setMode] = useState<PasteMode>("existing");
@@ -133,6 +134,7 @@ export default function PastePage() {
           [
             { key: "existing", label: "Existing cafe" },
             { key: "new", label: "New customer" },
+            { key: "build", label: "Build order" },
           ] as const
         ).map((tab) => (
           <button
@@ -176,9 +178,9 @@ export default function PastePage() {
         </div>
       )}
 
-      <div className={clsx("mt-4 rounded-xl border border-forest-200 bg-white p-6 shadow-sm", mode !== "existing" && "hidden")}>
+      <div className={clsx("mt-4 rounded-xl border border-forest-200 bg-white p-6 shadow-sm", mode === "new" && "hidden")}>
         <h2 className="text-base font-semibold text-forest-900">
-          Paste an order message
+          {mode === "build" ? "Pick the cafe" : "Paste an order message"}
         </h2>
 
         <label className="mt-4 block text-sm font-medium text-forest-900">
@@ -223,6 +225,7 @@ export default function PastePage() {
           />
         )}
 
+        <div className={clsx(mode === "build" && "hidden")}>
         <label
           htmlFor="raw-message"
           className="mt-5 block text-sm font-medium text-forest-900"
@@ -280,7 +283,10 @@ export default function PastePage() {
             </Link>
           </p>
         )}
+        </div>
       </div>
+
+      {mode === "build" && <BuildOrder cafe={cafe} />}
 
       {parsingCount > 0 && (
         <p className="mt-4 text-sm">

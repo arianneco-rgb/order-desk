@@ -24,6 +24,7 @@ import { joinNaturally, plural } from "./conversions";
 import { DELIVERY_METHODS } from "./delivery";
 import { addRuntimeCustomer, getTestMode, historyRows, nextId, runtimeCustomers } from "./store";
 import type {
+  CafeAddress,
   CafeCustomer,
   CatalogProduct,
   DraftTotals,
@@ -230,14 +231,25 @@ async function fetchLiveCatalog(): Promise<CatalogProduct[]> {
         price: Number(v.price),
         title: v.title,
       };
-      // SKU convention: WHO-*-0200 = 200g pouch · WHC-* = case (10 x 200g)
-      // WHO-*-1000 = 1kg · SAM-* = sample sachet · CUS-*-0200 = custom 200g
-      if (/^WHC-/.test(sku)) entry.case = ref;
-      else if (/^WHO-.*-1000$/.test(sku)) entry.kilo = ref;
-      else if (/^WHO-.*-0200$/.test(sku) || /^CUS-.*-0200$/.test(sku)) entry.pouch = ref;
+      // SKU convention: WHO-*-0200 = 200g pouch · WHC-*/WLC-* = case
+      // (10 x 200g) · WHO-*-1000 = 1kg · SAM-* = sample sachet ·
+      // CUS-*-0200 = custom-blend 200g. Anything else is sold by the piece
+      // (whisk sets, starter kits, retail bundles) — those have no matcha
+      // weight, so they must not count toward kg totals or the 2kg MOQ.
+      if (/^WHC-/.test(sku) || /^WLC-/.test(sku)) entry.case = ref;
+      else if (/^WHO-.*-1000$/.test(sku) || /^CUS-.*-1001$/.test(sku)) entry.kilo = ref;
+      else if (/^WHO-.*-0200$/.test(sku) || /^CUS-.*-0(200|500)$/.test(sku)) entry.pouch = ref;
       else if (/^SAM-/.test(sku)) entry.sample = ref;
+      // First unrecognised variant becomes the piece price. Later ones are
+      // additional pack sizes of the same item; the app has no concept of
+      // those yet, so the cheapest single unit is the honest default.
+      else if (!entry.piece || ref.price < entry.piece.price) entry.piece = ref;
     }
-    if (entry.pouch || entry.case || entry.sample) {
+    // Keep EVERY product. The old allow-list silently dropped 10 of the 24
+    // products in the store — the Wholesale Starter Kit, the Whisk and Spoon
+    // set, Kashi (Figaro) and the retail lines were simply unorderable.
+    entry.nonMatcha = !entry.pouch && !entry.case && !entry.kilo && !entry.sample;
+    {
       // Samples live on a separate "Samples" product in the store; attach
       // them to the matching named product when the variant title names it.
       entry.aliases = Array.from(
@@ -261,7 +273,18 @@ async function fetchLiveCatalog(): Promise<CatalogProduct[]> {
       // exists at the same ₱200 as every other product (SAM-KOY-0020) —
       // this was purely a matching bug, not a Shopify data gap.
       const sampleName = v.title.toLowerCase().replace(/\s*\(.*\)\s*$/, "").trim();
-      const target = named.find((n) => n.title.toLowerCase().includes(sampleName));
+      // Prefer an EXACT title match before a containment match. Now that
+      // retail products are kept, "Kasane" is a substring of "Kasane First
+      // Harvest Matcha" — containment alone handed the wholesale 20g sample
+      // to the retail product, leaving wholesale Kasane with no sample at
+      // all. Shortest title wins among containment matches for the same
+      // reason: the plain name is the wholesale one.
+      const exact = named.find((n) => n.title.toLowerCase() === sampleName);
+      const target =
+        exact ??
+        named
+          .filter((n) => n.title.toLowerCase().includes(sampleName))
+          .sort((a, b) => a.title.length - b.title.length)[0];
       if (target && !target.sample) {
         target.sample = {
           variantId: v.id,
@@ -272,6 +295,12 @@ async function fetchLiveCatalog(): Promise<CatalogProduct[]> {
       }
     }
     result.splice(result.indexOf(samplesProduct), 1);
+  }
+
+  // Recompute after re-homing: a product that only gained its matcha
+  // identity via a sample variant isn't a piece-goods item.
+  for (const p of result) {
+    p.nonMatcha = !p.pouch && !p.case && !p.kilo && !p.sample;
   }
 
   return result.length > 0 ? result : CATALOG_SNAPSHOT;
@@ -308,13 +337,18 @@ export async function getCafeCustomers(): Promise<CafeCustomer[]> {
       pageInfo: { hasNextPage: boolean; endCursor: string | null };
     };
   };
-  // Paginate — RMC has 300+ wholesale customers, well past one page.
+  // Paginate. The tag:wholesale filter was removed because it silently hid
+  // real customers: Jerico Ondoy (Figaro) and Jane Degulacion (Abaca) are
+  // tagged only "Invoice Requested", so they could never be found in the
+  // cafe search. Fetching everyone means nobody is hidden by a missing tag;
+  // wholesale-tagged customers are still surfaced first below.
   const edges: CustomersPage["customers"]["edges"] = [];
   let after: string | null = null;
-  for (let page = 0; page < 10; page++) {
+  // 250 is Shopify's max page size — at 100 this took 19 round trips.
+  for (let page = 0; page < 12; page++) {
     const data: CustomersPage = await adminGraphQL<CustomersPage>(
       `query($after: String) {
-        customers(first: 100, query: "tag:wholesale", after: $after) {
+        customers(first: 250, after: $after) {
           edges { node { id displayName email phone tags defaultAddress { company city } } }
           pageInfo { hasNextPage endCursor }
         }
@@ -334,8 +368,90 @@ export async function getCafeCustomers(): Promise<CafeCustomer[]> {
       email: node.email ?? undefined,
       phone: node.phone ?? undefined,
       city: node.defaultAddress?.city ?? undefined,
+      isWholesale: node.tags.some((t) => t.toLowerCase() === "wholesale"),
     }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    // Wholesale first, then alphabetical — retail/untagged customers stay
+    // reachable by search without crowding the top of the list.
+    .sort((a, b) =>
+      a.isWholesale === b.isWholesale
+        ? a.name.localeCompare(b.name)
+        : a.isWholesale
+          ? -1
+          : 1
+    );
+}
+
+/**
+ * Shopify address books are messy in practice — of 250 wholesale customers
+ * sampled, 100 had more than one address and several had near-identical
+ * repeats (The Kind Cookie had 8). Some entries are only a province
+ * ("Abra"), which is useless for choosing a branch or a delivery method.
+ *
+ * Collapses exact-duplicate lines and sinks province-only stubs to the
+ * bottom so the first option in the picker is a real, usable address.
+ * Nothing is discarded — Joey can still pick a stub if that's genuinely all
+ * the cafe has.
+ */
+function dedupeAddresses(raw: ShopifyAddress[]): CafeAddress[] {
+  const seen = new Set<string>();
+  const out: CafeAddress[] = [];
+  for (const a of raw) {
+    const label = [a.company, a.address1, a.address2, a.city, a.province]
+      .map((x) => (x ?? "").trim())
+      .filter(Boolean)
+      .join(", ");
+    if (!label) continue;
+    const key = label.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      id: a.id,
+      label,
+      company: a.company ?? undefined,
+      address1: a.address1 ?? undefined,
+      address2: a.address2 ?? undefined,
+      city: a.city ?? undefined,
+      province: a.province ?? undefined,
+      zip: a.zip ?? undefined,
+      // A street line is what makes an address actionable; without one it's
+      // just a region.
+      isStub: !a.address1?.trim(),
+    });
+  }
+  return out.sort((a, b) => Number(a.isStub) - Number(b.isStub));
+}
+
+interface ShopifyAddress {
+  id: string;
+  company: string | null;
+  address1: string | null;
+  address2: string | null;
+  city: string | null;
+  province: string | null;
+  zip: string | null;
+}
+
+/**
+ * Every branch on one customer's Shopify record, deduped.
+ *
+ * Deliberately per-customer rather than part of the bulk list: pulling the
+ * address book for all 1,872 customers pushed the cafe-picker fetch from
+ * ~9s to 21s, and Joey only ever needs the addresses of the ONE cafe she
+ * has selected.
+ */
+export async function getCustomerAddresses(customerId: string): Promise<CafeAddress[]> {
+  if (shopifyMode() === "snapshot") return [];
+  const data = await adminGraphQL<{
+    customer: { addresses: ShopifyAddress[] } | null;
+  }>(
+    `query($id: ID!) {
+      customer(id: $id) {
+        addresses { id company address1 address2 city province zip }
+      }
+    }`,
+    { id: customerId }
+  );
+  return dedupeAddresses(data.customer?.addresses ?? []);
 }
 
 export interface PastOrder {
@@ -819,6 +935,17 @@ export function buildDraftLineItems(
         quantity: item.qty,
         label: `${product.title} sample × ${item.qty}`,
         isSample: true,
+      });
+      continue;
+    }
+    if (item.form === "piece") {
+      if (!product.piece) {
+        throw new Error(`${product.title} has no orderable variant in Shopify.`);
+      }
+      lines.push({
+        variantId: product.piece.variantId,
+        quantity: item.qty,
+        label: `${product.title} × ${item.qty}`,
       });
       continue;
     }

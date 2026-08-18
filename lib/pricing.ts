@@ -82,6 +82,32 @@ export function priceItems(
       };
     }
 
+    // Sold by the piece — whisk sets, starter kits, retail bundles. No
+    // case/kilo maths applies, and these carry no matcha weight, so the MOQ
+    // and kg totals below deliberately ignore them.
+    if (item.form === "piece") {
+      const rawPiecePrice = product.piece?.price ?? null;
+      const piecePrice = rawPiecePrice === 0 ? null : rawPiecePrice;
+      if (piecePrice === null) {
+        warnings.push(
+          rawPiecePrice === 0
+            ? `${product.title} has no price set in Shopify (shows ₱0) — fix it in Shopify before confirming.`
+            : `${product.title} has no orderable variant in Shopify.`
+        );
+      }
+      return {
+        ...item,
+        title: product.title,
+        cases: 0,
+        loosePouches: 0,
+        pouchPrice: null,
+        casePrice: null,
+        samplePrice: null,
+        amount: (piecePrice ?? 0) * item.qty,
+        warnings,
+      };
+    }
+
     if (item.form === "sample") {
       const rawSamplePrice = product.sample?.price ?? null;
       // A real sample variant should never be free — ₱0 in Shopify is a

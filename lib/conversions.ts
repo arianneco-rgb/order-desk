@@ -1,3 +1,4 @@
+import type { ItemForm } from "./types";
 // Unit rules (must match how RMC sells):
 //   1 pouch = 200g · 1 case = 2kg = 10 pouches · 1 kg = 5 pouches
 //   MOQ = 2kg (1 case) per order — anything below is flagged for Joey.
@@ -58,8 +59,11 @@ export function formatSampleQty(qty: number): string {
  * Reply phrasing for one line: "2 cases of Kasane", "5 pouches of Shizu",
  * "1 case and 3 pouches of Kasane", "2 samples of Takumi".
  */
-export function describeLine(title: string, form: "pouch" | "sample", qty: number): string {
+export function describeLine(title: string, form: ItemForm, qty: number): string {
   if (form === "sample") return `${plural(qty, "sample")} of ${title}`;
+  // Non-matcha goods (whisk sets, starter kits) are whole units — no case
+  // or kilo phrasing applies.
+  if (form === "piece") return `${plural(qty, "pc")} of ${title}`;
   const { cases, loosePouches } = splitCases(qty);
   if (cases > 0 && loosePouches > 0) {
     return `${plural(cases, "case")} and ${plural(loosePouches, "pouch")} of ${title}`;
