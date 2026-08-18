@@ -28,6 +28,30 @@ function sizesFor(p: CatalogProduct): { form: ItemForm; label: string; step: num
   return out;
 }
 
+/**
+ * Product categories, derived from the SKU prefix rather than the title —
+ * titles lie ("Custom Moonbug Matcha" is a custom blend, "Kashi (Figaro…)"
+ * doesn't say Custom at all), whereas the SKU convention is consistent:
+ *   CUS-/CUG- custom blend · REC-/RET- retail · WHO-KIT/WHK kit or tool
+ * Anything with a wholesale pouch or case is core matcha.
+ */
+const CATEGORIES = ["Matcha", "Custom blends", "Kits & tools", "Retail"] as const;
+type Category = (typeof CATEGORIES)[number];
+
+function skusOf(p: CatalogProduct): string[] {
+  return [p.pouch, p.case, p.kilo, p.sample, p.piece]
+    .filter(Boolean)
+    .map((v) => v!.sku ?? "");
+}
+
+function categoryOf(p: CatalogProduct): Category {
+  const skus = skusOf(p);
+  if (skus.some((s) => /^CU[SG]-/.test(s))) return "Custom blends";
+  if (skus.some((s) => /^RE[CT]-/.test(s))) return "Retail";
+  if (!p.nonMatcha) return "Matcha";
+  return "Kits & tools";
+}
+
 export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
   const router = useRouter();
   const toast = useToast();
@@ -42,6 +66,7 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [productQuery, setProductQuery] = useState("");
+  const [category, setCategory] = useState<Category | "All">("Matcha");
 
   useEffect(() => {
     fetch("/api/catalog")
@@ -76,11 +101,20 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
     [catalog]
   );
 
+  const counts = useMemo(() => {
+    const m = new Map<Category, number>();
+    for (const p of catalog ?? []) m.set(categoryOf(p), (m.get(categoryOf(p)) ?? 0) + 1);
+    return m;
+  }, [catalog]);
+
   const shown = useMemo(() => {
     const q = productQuery.trim().toLowerCase();
     const list = catalog ?? [];
-    return q ? list.filter((p) => p.title.toLowerCase().includes(q)) : list;
-  }, [catalog, productQuery]);
+    // A search looks across every category — being on the wrong tab
+    // shouldn't hide the thing you just typed the name of.
+    if (q) return list.filter((p) => p.title.toLowerCase().includes(q));
+    return category === "All" ? list : list.filter((p) => categoryOf(p) === category);
+  }, [catalog, productQuery, category]);
 
   function add(productKey: string, form: ItemForm, step: number) {
     setLines((prev) => {
@@ -206,10 +240,36 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
             <input
               value={productQuery}
               onChange={(e) => setProductQuery(e.target.value)}
-              placeholder="Filter products…"
+              placeholder="Search all products…"
               className="w-full rounded-md border border-forest-200 px-3 py-2 text-sm"
             />
           </div>
+
+          {/* Category pages. Hidden while searching, because a search
+              deliberately spans every category. */}
+          {!productQuery.trim() && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {(["All", ...CATEGORIES] as const).map((c) => {
+                const n = c === "All" ? (catalog?.length ?? 0) : (counts.get(c) ?? 0);
+                if (n === 0) return null;
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setCategory(c)}
+                    aria-pressed={category === c}
+                    className={
+                      category === c
+                        ? "rounded-full bg-forest-700 px-3 py-1 text-xs font-semibold text-white"
+                        : "rounded-full border border-forest-300 bg-white px-3 py-1 text-xs font-semibold text-forest-700 transition-colors hover:bg-forest-50"
+                    }
+                  >
+                    {c} <span className="font-normal opacity-70">{n}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {catalog === null ? (
             <p className="mt-4 flex items-center gap-2 text-sm text-forest-600">
