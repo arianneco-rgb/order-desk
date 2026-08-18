@@ -1,13 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  buildDraftLineItems,
-  completeDraftAsPaid,
-  createDraftOrder,
-  getCatalog,
-} from "@/lib/shopify";
-import { itemsText, priceItems } from "@/lib/pricing";
-import { paidConfirmationReply } from "@/lib/templates";
-import { appendOrderHistory } from "@/lib/sheets";
+import { buildDraftLineItems, createDraftOrder, getCatalog } from "@/lib/shopify";
+import { priceItems } from "@/lib/pricing";
 import { repriceOrder } from "@/lib/pipeline";
 import { createOrder, saveOrder } from "@/lib/store";
 import { describeLine } from "@/lib/conversions";
@@ -20,21 +13,22 @@ const MAX_LINES = 40;
 const MAX_QTY = 10_000;
 
 /**
- * Fast-track: build an order from tapped menu items, create the Shopify
- * draft, and mark it paid — in one request.
+ * Build order: create an order from tapped menu items and its real Shopify
+ * draft, landing straight in Processed.
  *
- * Deliberately server-side as a single operation rather than three chained
- * client calls: a half-finished fast-track (draft created, never marked
- * paid) would leave an orphan draft on the production store that nobody is
- * watching for, because the order never appears in Queue or Processed.
+ * What it skips is the QUEUE stage — the parse-and-review step — not the
+ * payment review. The order arrives in Processed exactly as a pasted one
+ * does: draft created, awaiting payment, with BPI matching and Joey's
+ * "Confirm payment · mark paid" click still required. Nothing here records
+ * money as received.
  *
  * The parser is bypassed entirely — lines arrive already resolved to
  * catalog keys, so every item carries confidence 1. That also sidesteps the
  * retail/wholesale name collisions the text parser is prone to.
  *
- * This is the one path that marks money received without a BPI match, so
- * the caller must pass confirm:true — the UI gates that behind a modal
- * showing the cafe, every line, and the total.
+ * Server-side as one operation so a failure can't leave an order with no
+ * draft silently sitting where nobody looks; confirm:true is required
+ * because this writes a real draft to the production store.
  */
 export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => ({}))) as {
@@ -50,7 +44,7 @@ export async function POST(request: NextRequest) {
 
   if (!body.confirm) {
     return NextResponse.json(
-      { error: "Fast-track needs an explicit confirmation." },
+      { error: "This needs an explicit confirmation." },
       { status: 400 }
     );
   }
@@ -125,47 +119,24 @@ export async function POST(request: NextRequest) {
     order.status = "draft_created";
     await saveOrder(order);
 
-    const { orderId } = await completeDraftAsPaid(order);
-    const text = itemsText(priced);
-    order.shopifyOrderId = orderId;
-    order.status = "paid";
-    order.paidAt = new Date().toISOString();
-    // No BPI match: fast-track asserts the payment landed, the same as
-    // ticking the manual-override box on the payment pane.
-    order.payment.confirmed = true;
-    order.paidReply = paidConfirmationReply(text || "your order", order.total);
-    order.fastTracked = true;
+    // Stops here. Payment stays unconfirmed so the order shows up in
+    // Processed with the usual BPI match and confirm step — the History
+    // row is written when Joey actually confirms payment, not now.
+    order.builtManually = true;
     await saveOrder(order);
 
-    let sheetWarning: string | undefined;
-    try {
-      await appendOrderHistory({
-        paidAt: order.paidAt,
-        company: order.company,
-        items: text,
-        total: order.total,
-        orderId: order.id,
-        shopifyDraftName: order.shopifyDraftName,
-        status: "paid",
-        isTest: order.isTest,
-      });
-    } catch (err) {
-      console.error("Order History append failed:", err);
-      sheetWarning = "Order created and marked paid, but recording it to History failed — add the row manually.";
-    }
-
-    return NextResponse.json({ order, sheetWarning }, { status: 201 });
+    return NextResponse.json({ order }, { status: 201 });
   } catch (err) {
     // Leave the order behind at whatever stage it reached rather than
     // deleting it: if the Shopify draft WAS created, silently discarding the
     // record here would strand it with nothing pointing at it.
     order.needsReview = true;
     order.reviewReasons.push(
-      `Fast-track failed partway: ${err instanceof Error ? err.message : "unknown error"}. Check Shopify before retrying.`
+      `Build order failed partway: ${err instanceof Error ? err.message : "unknown error"}. Check Shopify before retrying.`
     );
     await saveOrder(order).catch(() => {});
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Fast-track failed." },
+      { error: err instanceof Error ? err.message : "Couldn\u2019t create the order." },
       { status: 502 }
     );
   }

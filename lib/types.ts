@@ -210,11 +210,13 @@ export interface Order {
    */
   shippingAddress?: string;
   /**
-   * Created through the Build order screen and marked paid in one step,
-   * without a BPI match. Recorded so these are identifiable later — they
-   * skip the draft/payment review the rest of the app is built around.
+   * Came from the Build order screen (tapped menu) rather than a pasted
+   * Viber message, so its lines were never parsed. Recorded because it
+   * explains why the order has no real rawMessage and why every line is at
+   * confidence 1. Payment review is unchanged — these still land in
+   * Processed and still need a BPI match and Joey's confirmation.
    */
-  fastTracked?: boolean;
+  builtManually?: boolean;
 }
 
 /** One branch/address from the Shopify customer's address book. */

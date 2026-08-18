@@ -175,13 +175,12 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `Failed (HTTP ${res.status}).`);
-      if (data.sheetWarning) toast(data.sheetWarning, "error");
-      toast(`${cafe.name} — order created and marked paid.`, "success");
+      toast(`${cafe.name} — draft created, waiting in Processed for payment.`, "success");
       setConfirmOpen(false);
       setLines([]);
-      router.push("/history");
+      router.push("/processed");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Fast-track failed.");
+      setError(err instanceof Error ? err.message : "Couldn\u2019t create the order.");
     } finally {
       setBusy(false);
     }
@@ -205,8 +204,8 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
     <div className="mt-4 rounded-xl border border-forest-200 bg-white p-5 shadow-sm">
       <h2 className="text-base font-semibold text-forest-900">Build order</h2>
       <p className="mt-1 text-sm text-forest-600">
-        Tap products to add them. Creating the order marks it paid immediately — no draft review,
-        no BPI match.
+        Tap products to add them. This skips the Queue and creates the Shopify draft straight away —
+        the order then waits in Processed for its BPI payment match, same as any other.
       </p>
 
       {!cafe && (
@@ -379,7 +378,7 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
                 onClick={() => setConfirmOpen(true)}
                 className="rounded-md bg-forest-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-forest-800 disabled:opacity-50"
               >
-                Create order · mark paid
+                Create draft · send to Processed
               </button>
             </div>
             {error && <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
@@ -387,10 +386,11 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
         </>
       )}
 
-      <Modal open={confirmOpen} onClose={() => !busy && setConfirmOpen(false)} title="Create order and mark it paid?">
+      <Modal open={confirmOpen} onClose={() => !busy && setConfirmOpen(false)} title="Create the Shopify draft?">
         <p className="text-sm text-forest-700">
-          This creates a <strong>real Shopify order</strong> for <strong>{cafe?.name}</strong> and marks
-          it <strong>paid immediately</strong>. There is no draft review and no BPI payment match.
+          Creates a <strong>real Shopify draft</strong> for <strong>{cafe?.name}</strong> and sends it
+          to <strong>Processed</strong>. Payment is still confirmed there, with the usual BPI match —
+          nothing is marked paid here.
         </p>
         <ul className="mt-3 space-y-1 rounded-md bg-forest-50 p-3 text-sm text-forest-800">
           {lines.map((l) => (
@@ -412,7 +412,7 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
           <button type="button" onClick={() => void submit()} disabled={busy}
             className="flex items-center gap-2 rounded-md bg-forest-700 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">
             {busy && <Spinner className="h-4 w-4 text-white" />}
-            {busy ? "Creating…" : "Yes, create and mark paid"}
+            {busy ? "Creating…" : "Yes, create the draft"}
           </button>
         </div>
       </Modal>
