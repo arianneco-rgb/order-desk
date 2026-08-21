@@ -64,6 +64,7 @@ export function describeLine(title: string, form: ItemForm, qty: number): string
   // Non-matcha goods (whisk sets, starter kits) are whole units — no case
   // or kilo phrasing applies.
   if (form === "piece") return `${plural(qty, "pc")} of ${title}`;
+  if (form === "case_nolabel") return `${plural(qty, "case")} of ${title} (white pouch, no label)`;
   const { cases, loosePouches } = splitCases(qty);
   if (cases > 0 && loosePouches > 0) {
     return `${plural(cases, "case")} and ${plural(loosePouches, "pouch")} of ${title}`;

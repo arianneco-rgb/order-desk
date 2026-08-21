@@ -236,7 +236,13 @@ async function fetchLiveCatalog(): Promise<CatalogProduct[]> {
       // CUS-*-0200 = custom-blend 200g. Anything else is sold by the piece
       // (whisk sets, starter kits, retail bundles) — those have no matcha
       // weight, so they must not count toward kg totals or the 2kg MOQ.
-      if (/^WHC-/.test(sku) || /^WLC-/.test(sku)) entry.case = ref;
+      // WHC- is the standard case. WLC- is a DIFFERENT product — "Case
+      // (10 x 200g) White Pouch No Label", used for custom/white-label
+      // orders — and must never stand in for it. Mapping both to `case`
+      // let WLC overwrite WHC (Shopify returns it second), so a plain
+      // "2 cases of Nagomi" silently drafted the unlabelled pouches.
+      if (/^WHC-/.test(sku)) entry.case = ref;
+      else if (/^WLC-/.test(sku)) entry.caseNoLabel = ref;
       else if (/^WHO-.*-1000$/.test(sku) || /^CUS-.*-1001$/.test(sku)) entry.kilo = ref;
       else if (/^WHO-.*-0200$/.test(sku) || /^CUS-.*-0(200|500)$/.test(sku)) entry.pouch = ref;
       else if (/^SAM-/.test(sku)) entry.sample = ref;
@@ -248,7 +254,7 @@ async function fetchLiveCatalog(): Promise<CatalogProduct[]> {
     // Keep EVERY product. The old allow-list silently dropped 10 of the 24
     // products in the store — the Wholesale Starter Kit, the Whisk and Spoon
     // set, Kashi (Figaro) and the retail lines were simply unorderable.
-    entry.nonMatcha = !entry.pouch && !entry.case && !entry.kilo && !entry.sample;
+    entry.nonMatcha = !entry.pouch && !entry.case && !entry.caseNoLabel && !entry.kilo && !entry.sample;
     {
       // Samples live on a separate "Samples" product in the store; attach
       // them to the matching named product when the variant title names it.
@@ -300,7 +306,7 @@ async function fetchLiveCatalog(): Promise<CatalogProduct[]> {
   // Recompute after re-homing: a product that only gained its matcha
   // identity via a sample variant isn't a piece-goods item.
   for (const p of result) {
-    p.nonMatcha = !p.pouch && !p.case && !p.kilo && !p.sample;
+    p.nonMatcha = !p.pouch && !p.case && !p.caseNoLabel && !p.kilo && !p.sample;
   }
 
   return result.length > 0 ? result : CATALOG_SNAPSHOT;
@@ -935,6 +941,17 @@ export function buildDraftLineItems(
         quantity: item.qty,
         label: `${product.title} sample × ${item.qty}`,
         isSample: true,
+      });
+      continue;
+    }
+    if (item.form === "case_nolabel") {
+      if (!product.caseNoLabel) {
+        throw new Error(`${product.title} has no "White Pouch No Label" case variant in Shopify.`);
+      }
+      lines.push({
+        variantId: product.caseNoLabel.variantId,
+        quantity: item.qty,
+        label: `${product.title} case (no label) × ${item.qty}`,
       });
       continue;
     }

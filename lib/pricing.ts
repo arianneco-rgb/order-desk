@@ -82,6 +82,32 @@ export function priceItems(
       };
     }
 
+    // "White Pouch No Label" case (SKU WLC-) — a distinct Shopify variant
+    // for custom/white-label orders. qty is CASES, not pouches, and it is
+    // only ever ordered by asking for it explicitly.
+    if (item.form === "case_nolabel") {
+      const raw = product.caseNoLabel?.price ?? null;
+      const price = raw === 0 ? null : raw;
+      if (price === null) {
+        warnings.push(
+          raw === 0
+            ? `${product.title}'s no-label case has no price set in Shopify (shows ₱0) — fix it in Shopify before confirming.`
+            : `${product.title} has no "White Pouch No Label" case variant in Shopify.`
+        );
+      }
+      return {
+        ...item,
+        title: product.title,
+        cases: item.qty,
+        loosePouches: 0,
+        pouchPrice: null,
+        casePrice: price,
+        samplePrice: null,
+        amount: (price ?? 0) * item.qty,
+        warnings,
+      };
+    }
+
     // Sold by the piece — whisk sets, starter kits, retail bundles. No
     // case/kilo maths applies, and these carry no matcha weight, so the MOQ
     // and kg totals below deliberately ignore them.
@@ -196,9 +222,11 @@ export function pricingReviewReasons(priced: PricedItem[]): {
 } {
   const reasons: string[] = [];
   const softNotes: string[] = [];
+  // A no-label case is still 10 x 200g of matcha, so it counts toward the
+  // weight and the MOQ exactly like ten pouches would.
   const totalPouches = priced
-    .filter((l) => l.form === "pouch")
-    .reduce((sum, l) => sum + l.qty, 0);
+    .filter((l) => l.form === "pouch" || l.form === "case_nolabel")
+    .reduce((sum, l) => sum + (l.form === "case_nolabel" ? l.qty * 10 : l.qty), 0);
 
   if (priced.length > 0 && totalPouches > 0 && totalPouches < MOQ_POUCHES) {
     reasons.push(

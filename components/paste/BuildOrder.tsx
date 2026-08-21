@@ -22,6 +22,11 @@ function sizesFor(p: CatalogProduct): { form: ItemForm; label: string; step: num
   // Cases aren't a separate line type — pricing already bills every full 10
   // pouches at the case rate, so this just adds 10 pouches.
   if (p.case) out.push({ form: "pouch", label: "Case", step: POUCHES_PER_CASE, price: p.case.price });
+  // Explicit and clearly labelled: this is a different Shopify variant, not
+  // a styling choice. It must never be picked by accident in place of the
+  // standard case.
+  if (p.caseNoLabel)
+    out.push({ form: "case_nolabel", label: "Case · no label", step: 1, price: p.caseNoLabel.price });
   if (p.pouch) out.push({ form: "pouch", label: "200g", step: 1, price: p.pouch.price });
   if (p.sample) out.push({ form: "sample", label: "Sample", step: 1, price: p.sample.price });
   if (p.piece) out.push({ form: "piece", label: "Piece", step: 1, price: p.piece.price });
@@ -140,6 +145,10 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
       if (!p) continue;
       if (l.form === "sample") amount += (p.sample?.price ?? 0) * l.qty;
       else if (l.form === "piece") amount += (p.piece?.price ?? 0) * l.qty;
+      else if (l.form === "case_nolabel") {
+        amount += (p.caseNoLabel?.price ?? 0) * l.qty;
+        pouches += l.qty * POUCHES_PER_CASE; // still 2kg of matcha each
+      }
       else {
         // Mirrors lib/pricing.ts: full cases at the case rate, remainder
         // at the single-pouch rate — so this preview matches the invoice.
@@ -191,6 +200,8 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
     const title = p?.title ?? l.productKey;
     if (l.form === "sample") return `${title} · ${l.qty} sample${l.qty === 1 ? "" : "s"}`;
     if (l.form === "piece") return `${title} · ${l.qty} pc`;
+    if (l.form === "case_nolabel")
+      return `${title} · ${l.qty} case${l.qty === 1 ? "" : "s"} — WHITE POUCH, NO LABEL (${(l.qty * 2).toFixed(1)}kg)`;
     const cases = Math.floor(l.qty / POUCHES_PER_CASE);
     const loose = l.qty % POUCHES_PER_CASE;
     const parts = [

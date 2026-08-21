@@ -15,7 +15,7 @@ export type OrderStatus =
  * starter kits) sold as whole units — they carry no weight, so they're
  * excluded from kg totals and the 2kg MOQ check.
  */
-export type ItemForm = "pouch" | "sample" | "piece";
+export type ItemForm = "pouch" | "sample" | "piece" | "case_nolabel";
 
 export interface OrderItem {
   productKey: string;
@@ -269,8 +269,14 @@ export interface CatalogProduct {
   productId: string;
   /** 200g pouch variant. */
   pouch?: VariantRef;
-  /** Case (10 x 200g) variant. */
+  /** Case (10 x 200g) variant — the standard labelled case (SKU WHC-). */
   case?: VariantRef;
+  /**
+   * "Case (10 x 200g) White Pouch No Label" (SKU WLC-) — a separate
+   * variant for custom/white-label orders, same price as the standard
+   * case. Never substituted for `case`: it has to be asked for explicitly.
+   */
+  caseNoLabel?: VariantRef;
   /** 1kg variant (only some products, e.g. Koyo Hojicha). */
   kilo?: VariantRef;
   /** 20g sample sachet variant (50g for Mitsu). */
