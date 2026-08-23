@@ -136,6 +136,11 @@ export function LineItemEditor({
               >
                 <option value="pouch">200g pouches</option>
                 <option value="sample">20g samples</option>
+                {/* Only offered on products that actually have the variant —
+                    picking it elsewhere would fail at draft creation. */}
+                {catalog.find((p) => p.key === item.productKey)?.caseNoLabel && (
+                  <option value="case_nolabel">Cases · WHITE POUCH, NO LABEL</option>
+                )}
               </select>
               <input
                 type="number"
@@ -143,7 +148,13 @@ export function LineItemEditor({
                 value={item.qty}
                 onChange={(e) => updateLine(index, { qty: clampQty(e.target.value) })}
                 className="w-20 rounded-md border border-forest-300 px-2 py-1.5 text-sm text-forest-900 focus:border-forest-600 focus:outline-none"
-                aria-label={item.form === "pouch" ? "Pouches" : "Sachets"}
+                aria-label={
+                  item.form === "pouch"
+                    ? "Pouches"
+                    : item.form === "case_nolabel"
+                      ? "Cases"
+                      : "Sachets"
+                }
               />
               {item.form === "pouch" && (
                 <button

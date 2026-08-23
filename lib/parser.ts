@@ -7,7 +7,7 @@
 // is flagged "Needs review" instead of silently guessing.
 
 import type { CatalogProduct, ItemForm, OrderItem } from "./types";
-import { POUCHES_PER_KG, gramsToPouches, plural } from "./conversions";
+import { POUCHES_PER_CASE, POUCHES_PER_KG, gramsToPouches, plural } from "./conversions";
 
 export interface ParseResult {
   items: OrderItem[];
@@ -326,6 +326,26 @@ const NOISE_PATTERNS = [
   /^(hi|hello|hey|good\s*(am|pm|morning|afternoon|evening)|thank(s| you).*|pa[- ]?order|order|pwede|paki|please|pls|po|opo|yes|sige|same day.*|asap.*)(\s+(po|naman|ulit|please|pls|sana))*$/,
 ];
 
+
+/**
+ * The "White Pouch No Label" case (SKU WLC-) is a distinct Shopify variant
+ * for custom/white-label orders, and cafes ask for it in free text. Wording
+ * seen and anticipated: "no label", "unlabeled/unlabelled", "white pouch",
+ * "blank pouch", "plain pouch", "no branding", "walang label" (Tagalog).
+ *
+ * Detection alone is never enough to act on silently — this is exactly the
+ * kind of guess that put the wrong variant on 17 orders — so every line it
+ * touches is flagged for review.
+ */
+const NO_LABEL_RE =
+  /\b(no[\s-]*label|un[\s-]*labell?ed|white\s+pouch|blank\s+pouch|plain\s+pouch|no\s+branding|walang\s+label)\b/i;
+
+/** How many whole cases `pouches` represents, or null if it isn't a clean multiple. */
+function wholeCases(pouches: number): number | null {
+  if (pouches <= 0 || pouches % POUCHES_PER_CASE !== 0) return null;
+  return pouches / POUCHES_PER_CASE;
+}
+
 export function parseMessage(
   message: string,
   catalog: CatalogProduct[]
@@ -337,6 +357,10 @@ export function parseMessage(
   const lowerMessage = message.toLowerCase();
   const sampleWordAnywhere = /\bsamples?\b/.test(lowerMessage);
   const caseWordAnywhere = /\bcases?\b/.test(lowerMessage);
+  const noLabelAnywhere = NO_LABEL_RE.test(message);
+  // Set when a no-label phrase was successfully attached to a line, so the
+  // catch-all warning at the end doesn't double up.
+  let noLabelApplied = false;
 
   // A qty with no product ("1 case" in "1 case and 3 pouches of kasane")
   // carries over to the next segment that names a product.
@@ -403,6 +427,53 @@ export function parseMessage(
       softNotes.push(`${product.title}: read "box" as case.`);
     }
 
+    // No-label handling. The phrase can sit in this segment ("2 cases
+    // Nagomi no label") or, for a single-product message, anywhere in it
+    // ("2 cases Nagomi" / "no label please" on the next line).
+    const noLabelHere =
+      NO_LABEL_RE.test(segment) || (noLabelAnywhere && segments.length <= 2);
+    if (noLabelHere && pouches > 0) {
+      // A quantity sitting right before the phrase that differs from the
+      // line's own quantity means a SPLIT order — "3 cases Nagomi, 1 no
+      // label" is 2 labelled + 1 unlabelled, not 3 unlabelled. There's no
+      // safe way to infer the split, so leave the line alone and say so.
+      const QTY_BEFORE_NO_LABEL =
+        /(\d+)\s*(?:cases?|pcs?|pouch(?:es)?)?\s*(?:with\s+|in\s+)?(?:no[\s-]*label|un[\s-]*labell?ed|white\s+pouch|blank\s+pouch|plain\s+pouch)/i;
+      // Check the segment first, then the whole message: "3 cases Nagomi,
+      // 1 no label" splits into two segments, so the qualifying quantity
+      // lives outside the segment that names the product.
+      const own = segment.match(QTY_BEFORE_NO_LABEL) ?? message.match(QTY_BEFORE_NO_LABEL);
+      const stated = own ? Number(own[1]) : null;
+      const lineCases = wholeCases(pouches);
+      if (stated !== null && lineCases !== null && stated !== lineCases) {
+        reasons.push(
+          `${product.title}: looks like a split order — ${plural(lineCases, "case")} total with ${stated} unlabelled. Set the labelled and no-label lines manually.`
+        );
+        noLabelApplied = true;
+        if (pouches > 0) upsert(items, product.key, "pouch", pouches, 0);
+        if (samples > 0) upsert(items, product.key, "sample", samples, confidence);
+        continue;
+      }
+      const cases = wholeCases(pouches);
+      if (cases !== null && product.caseNoLabel) {
+        upsert(items, product.key, "case_nolabel", cases, Math.min(confidence || 1, 0.6));
+        noLabelApplied = true;
+        reasons.push(
+          `${product.title}: read as ${plural(cases, "case")} of WHITE POUCH, NO LABEL — confirm this is right before creating the draft.`
+        );
+        if (samples > 0) upsert(items, product.key, "sample", samples, confidence);
+        continue;
+      }
+      // Asked for, but we can't honour it cleanly — say so instead of
+      // quietly shipping the labelled version.
+      reasons.push(
+        !product.caseNoLabel
+          ? `${product.title}: a no-label pouch was asked for, but this product has no "White Pouch No Label" variant in Shopify — check with the cafe.`
+          : `${product.title}: a no-label pouch was asked for but the quantity isn't a whole number of cases (${pouches} pouches) — set the lines manually.`
+      );
+      noLabelApplied = true;
+    }
+
     if (pouches > 0) upsert(items, product.key, "pouch", pouches, confidence);
     if (samples > 0) upsert(items, product.key, "sample", samples, confidence);
     // Product recognized but no quantity anywhere — still add the line
@@ -419,6 +490,15 @@ export function parseMessage(
 
   if (items.length === 0) {
     reasons.push("No line items recognized — add them manually.");
+  }
+
+  // The message mentions a no-label pouch but it couldn't be pinned to a
+  // specific line (mixed orders like "3 cases Nagomi, 1 no label", or the
+  // phrase sitting far from any product). Never guess the split — say so.
+  if (noLabelAnywhere && !noLabelApplied) {
+    reasons.push(
+      'This message mentions an unlabelled / white pouch, but it wasn\u2019t clear which lines it applies to — set those lines to "Cases (no label)" manually.'
+    );
   }
 
   for (const item of items) {

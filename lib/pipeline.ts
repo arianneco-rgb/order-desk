@@ -103,12 +103,11 @@ export async function tick(): Promise<Order[]> {
 export async function processOrder(order: Order): Promise<Order> {
   const catalog = await getCatalog();
   const { items, reasons, softNotes } = parseMessage(order.rawMessage, catalog);
-  // The parser must never reach for the white-label case: "2 cases of
-  // Nagomi" in a Viber message always means the standard labelled case.
-  // Asking for the unlabelled one is a deliberate act on the Build screen.
-  order.items = items.map((i) =>
-    i.form === "case_nolabel" ? { ...i, form: "pouch" as const, qty: i.qty * 10 } : i
-  );
+  // The parser CAN now produce no-label cases, but only when the message
+  // explicitly asks for one — and every such line is flagged for review
+  // (see NO_LABEL_RE in lib/parser.ts). A plain "2 cases of Nagomi" still
+  // yields the standard labelled case.
+  order.items = items;
   reasons.push(...(await duplicateReasons(order)));
   await applyCustomerDefaults(order);
   await repriceOrder(order, reasons, softNotes);
