@@ -49,9 +49,16 @@ const METRO_MANILA_HINTS = [
  */
 export function defaultDeliveryMethod(
   city?: string,
-  province?: string
+  province?: string,
+  addressText?: string
 ): DeliveryMethod | undefined {
-  const hay = `${city ?? ""} ${province ?? ""}`.toLowerCase().trim();
+  // City and province are the reliable fields, but 164 of 1,945 customers
+  // have both blank with the location written into the street line instead
+  // ("... Aguirre Building, Makati City"). Fall back to that rather than
+  // leaving the order with no delivery method at all.
+  const hay = `${city ?? ""} ${province ?? ""} ${addressText ?? ""}`
+    .toLowerCase()
+    .trim();
   if (!hay) return undefined;
   return METRO_MANILA_HINTS.some((h) => hay.includes(h))
     ? "mm_delivery"

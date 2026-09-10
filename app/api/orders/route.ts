@@ -20,6 +20,8 @@ export async function POST(request: NextRequest) {
     company?: string;
     customerId?: string;
     rawMessage?: string;
+    isRush?: boolean;
+    specialInstructions?: string;
   };
   const company = body.company?.trim();
   const rawMessage = body.rawMessage?.trim();
@@ -42,10 +44,16 @@ export async function POST(request: NextRequest) {
     body.customerId?.startsWith("mock:")
       ? body.customerId
       : undefined;
+  const specialInstructions =
+    typeof body.specialInstructions === "string" && body.specialInstructions.trim()
+      ? body.specialInstructions.trim().slice(0, 500)
+      : undefined;
   const order = await createOrder({
     company,
     customerId,
     rawMessage,
+    isRush: body.isRush === true,
+    specialInstructions,
   });
   return NextResponse.json({ order }, { status: 201 });
 }

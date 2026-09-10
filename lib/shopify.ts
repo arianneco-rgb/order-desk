@@ -197,6 +197,13 @@ interface ProductsQuery {
   };
 }
 
+/** Every SKU attached to a catalog entry, in one list. */
+function skusOf(p: CatalogProduct): string[] {
+  return [p.pouch, p.case, p.caseNoLabel, p.kilo, p.sample, p.piece]
+    .filter(Boolean)
+    .map((v) => v!.sku ?? "");
+}
+
 async function fetchLiveCatalog(): Promise<CatalogProduct[]> {
   const products: ProductsQuery["products"]["edges"][number]["node"][] = [];
   let after: string | null = null;
@@ -251,9 +258,18 @@ async function fetchLiveCatalog(): Promise<CatalogProduct[]> {
       // those yet, so the cheapest single unit is the honest default.
       else if (!entry.piece || ref.price < entry.piece.price) entry.piece = ref;
     }
-    // Keep EVERY product. The old allow-list silently dropped 10 of the 24
-    // products in the store — the Wholesale Starter Kit, the Whisk and Spoon
-    // set, Kashi (Figaro) and the retail lines were simply unorderable.
+    // Retail lines (SKU REC-/RET-) are consumer products — 40g cans and gift
+    // sets sold on the storefront — and Order Desk is wholesale-only. Worse,
+    // their names shadow the wholesale ones: "Kasane First Harvest Matcha"
+    // contains "Kasane", "Koyo Dark Roast Hojicha" contains "Koyo Hojicha",
+    // so a pasted "2 cases Kasane" could match the retail product and price
+    // the order wrong. Dropping them removes the ambiguity at the source.
+    // The WHOLESALE Starter Kit (WHO-KIT-0004) is deliberately unaffected.
+    if (skusOf(entry).some((sku) => /^RE[CT]-/.test(sku))) continue;
+
+    // Everything else is kept. The original allow-list silently dropped 10
+    // of the 24 products — the Wholesale Starter Kit, the Whisk and Spoon
+    // set and Kashi (Figaro) were simply unorderable.
     entry.nonMatcha = !entry.pouch && !entry.case && !entry.caseNoLabel && !entry.kilo && !entry.sample;
     {
       // Samples live on a separate "Samples" product in the store; attach
@@ -554,6 +570,8 @@ export interface CustomerDefaults {
   tags: string[];
   city?: string;
   province?: string;
+  /** Street line + zip, used only as a fallback when city/province are blank. */
+  addressText?: string;
 }
 
 export async function getCustomerDefaults(
@@ -564,13 +582,19 @@ export async function getCustomerDefaults(
     customer: {
       taxExempt: boolean;
       tags: string[];
-      defaultAddress: { city: string | null; province: string | null } | null;
+      defaultAddress: {
+        city: string | null;
+        province: string | null;
+        address1: string | null;
+        address2: string | null;
+        zip: string | null;
+      } | null;
     } | null;
   }>(
     `query($id: ID!) {
       customer(id: $id) {
         taxExempt tags
-        defaultAddress { city province }
+        defaultAddress { city province address1 address2 zip }
       }
     }`,
     { id: customerId }
@@ -581,6 +605,17 @@ export async function getCustomerDefaults(
     tags: data.customer.tags,
     city: data.customer.defaultAddress?.city ?? undefined,
     province: data.customer.defaultAddress?.province ?? undefined,
+    // 164 customers have an address whose city and province fields are both
+    // empty, but whose street line still names the place ("... Makati City").
+    // Passing it through lets the delivery default resolve from that rather
+    // than giving up.
+    addressText: [
+      data.customer.defaultAddress?.address1,
+      data.customer.defaultAddress?.address2,
+      data.customer.defaultAddress?.zip,
+    ]
+      .filter(Boolean)
+      .join(" ") || undefined,
   };
 }
 
@@ -1026,10 +1061,20 @@ function buildDraftOrderInput(
     ...(order.customerId && !order.customerId.startsWith("mock:")
       ? { purchasingEntity: { customerId: order.customerId } }
       : {}),
-    note: `Order Desk — pasted Viber message from ${order.company}:\n${order.rawMessage}`,
+    // Rush and special instructions go at the TOP of the note: whoever packs
+    // this reads the note, and burying a "deliver before 10am" under the
+    // pasted conversation is the same as not recording it.
+    note: [
+      order.isRush ? "*** RUSH ORDER ***" : "",
+      order.specialInstructions ? `Special instructions: ${order.specialInstructions}` : "",
+      `Order Desk — pasted Viber message from ${order.company}:\n${order.rawMessage}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
     tags: [
       "Order Desk",
       order.company,
+      ...(order.isRush ? ["Rush"] : []),
       ...(delivery ? [`Delivery: ${delivery.label}`] : []),
     ]
       .map(shopifyTag)

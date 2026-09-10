@@ -109,7 +109,7 @@ export async function processOrder(order: Order): Promise<Order> {
   // yields the standard labelled case.
   order.items = items;
   reasons.push(...(await duplicateReasons(order)));
-  await applyCustomerDefaults(order);
+  reasons.push(...(await applyCustomerDefaults(order)));
   await repriceOrder(order, reasons, softNotes);
   order.status = "processed";
   order.processedAt = new Date().toISOString();
@@ -122,19 +122,33 @@ export async function processOrder(order: Order): Promise<Order> {
  * processing): address → delivery method, tax setting / "Invoice Requested"
  * tag → VAT box. Joey can override everything on the order card.
  */
-async function applyCustomerDefaults(order: Order): Promise<void> {
-  if (!order.customerId) return;
+async function applyCustomerDefaults(order: Order): Promise<string[]> {
+  const notes: string[] = [];
+  if (!order.customerId) return notes;
   try {
     const defaults = await getCustomerDefaults(order.customerId);
-    if (!defaults) return;
+    if (!defaults) return notes;
     if (!order.options.deliveryMethod) {
-      order.options.deliveryMethod = defaultDeliveryMethod(defaults.city, defaults.province);
+      order.options.deliveryMethod = defaultDeliveryMethod(
+        defaults.city,
+        defaults.province,
+        defaults.addressText
+      );
+      // Previously this just left the field blank, and a draft could go out
+      // with no shipping line at all without anyone noticing. 266 of 1,945
+      // customers have no usable address, so say it out loud instead.
+      if (!order.options.deliveryMethod) {
+        notes.push(
+          `No delivery method set — ${order.company} has no city or province in Shopify, so one couldn't be worked out. Pick one before creating the draft.`
+        );
+      }
     }
     const invoiceTag = defaults.tags.some((t) => t.toLowerCase().includes("invoice"));
     if (invoiceTag || !defaults.taxExempt) order.options.chargeVat = true;
   } catch (err) {
     console.error("Customer defaults lookup failed (using plain defaults):", err);
   }
+  return notes;
 }
 
 /** Double-sent Viber messages happen — flag likely duplicates, never block. */

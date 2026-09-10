@@ -176,10 +176,24 @@ export function OrderCard({
         <div className="min-w-0">
           <p className="break-words text-base font-semibold text-forest-900">
             {order.company}
+            {order.isRush && (
+              <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 align-middle text-[11px] font-bold uppercase tracking-wide text-amber-900">
+                Rush
+              </span>
+            )}
           </p>
           <p className="mt-0.5 text-xs text-forest-500">
             Received {formatTime(order.createdAt)}
           </p>
+          {order.specialInstructions && (
+            // Sits under the cafe name rather than with the draft options:
+            // it's something the cafe asked for, not a choice made here, and
+            // it has to be read before the order is packed.
+            <p className="mt-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+              <span className="font-semibold">Special instructions:</span>{" "}
+              {order.specialInstructions}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <div className="flex items-center gap-1.5">

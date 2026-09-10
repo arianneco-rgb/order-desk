@@ -210,6 +210,20 @@ export interface Order {
    */
   shippingAddress?: string;
   /**
+   * Cafe asked for this urgently. Standard lead time is 3-5 days, so a rush
+   * order changes what production does with it — it rides on the order
+   * itself (not DraftOptions) because it describes the request, not a
+   * choice made while drafting, and the order-status dashboard will read it.
+   */
+  isRush?: boolean;
+  /**
+   * Anything the cafe asked for that the line items can't express — packing
+   * notes, a delivery window, who to hand it to. Free text, shown on the
+   * order and carried onto the Shopify draft note so it reaches whoever
+   * packs it.
+   */
+  specialInstructions?: string;
+  /**
    * Came from the Build order screen (tapped menu) rather than a pasted
    * Viber message, so its lines were never parsed. Recorded because it
    * explains why the order has no real rawMessage and why every line is at

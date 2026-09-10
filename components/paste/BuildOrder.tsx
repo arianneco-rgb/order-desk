@@ -71,6 +71,8 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [productQuery, setProductQuery] = useState("");
+  const [isRush, setIsRush] = useState(false);
+  const [specialInstructions, setSpecialInstructions] = useState("");
   const [category, setCategory] = useState<Category | "All">("Matcha");
 
   useEffect(() => {
@@ -179,6 +181,8 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
           deliveryMethod: deliveryMethod || undefined,
           deliveryFee: deliveryFee === "" ? undefined : Number(deliveryFee),
           shippingAddress: addressLabel || undefined,
+          isRush,
+          specialInstructions: specialInstructions.trim() || undefined,
           confirm: true,
         }),
       });
@@ -349,6 +353,10 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
                 <input type="checkbox" checked={chargeVat} onChange={(e) => setChargeVat(e.target.checked)} />
                 Charge VAT (12%)
               </label>
+              <label className="flex items-center gap-2 text-sm text-forest-700">
+                <input type="checkbox" checked={isRush} onChange={(e) => setIsRush(e.target.checked)} />
+                Rush order
+              </label>
               <div className="flex items-center gap-2">
                 <select
                   value={deliveryMethod}
@@ -376,6 +384,15 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
                 />
               </div>
             </div>
+
+            <textarea
+              value={specialInstructions}
+              onChange={(e) => setSpecialInstructions(e.target.value)}
+              rows={2}
+              maxLength={500}
+              placeholder="Special instructions (optional) — packing notes, delivery window…"
+              className="mt-3 w-full rounded-md border border-forest-200 px-3 py-2 text-sm"
+            />
 
             <div className="mt-4 flex items-center justify-between gap-3">
               <p className="text-sm text-forest-700">
@@ -411,6 +428,7 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
         <p className="mt-3 text-sm text-forest-900">
           Total <strong>{formatPeso(totals.amount)}</strong>
           {chargeVat && " · VAT charged"}
+          {isRush && " · RUSH"}
           {deliveryMethod && ` · ${DELIVERY_METHODS[deliveryMethod as keyof typeof DELIVERY_METHODS].label}`}
         </p>
         {addressLabel && <p className="mt-1 text-xs text-forest-600">Deliver to: {addressLabel}</p>}

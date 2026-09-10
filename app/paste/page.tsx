@@ -16,6 +16,8 @@ export default function PastePage() {
   const [mode, setMode] = useState<PasteMode>("existing");
   const [cafe, setCafe] = useState<CafeCustomer | null>(null);
   const [message, setMessage] = useState("");
+  const [isRush, setIsRush] = useState(false);
+  const [specialInstructions, setSpecialInstructions] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -85,6 +87,8 @@ export default function PastePage() {
           company: cafe.name,
           customerId: cafe.shopifyId,
           rawMessage: message,
+          isRush,
+          specialInstructions,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -93,6 +97,8 @@ export default function PastePage() {
       }
       // Keep the cafe selected — Joey pastes the next message from the same chat.
       setMessage("");
+      setIsRush(false);
+      setSpecialInstructions("");
       setParsingCount((n) => n + 1);
       showNotice();
     } catch (err) {
@@ -246,6 +252,39 @@ export default function PastePage() {
             {error}
           </div>
         )}
+
+        <div className="mt-4 space-y-3 rounded-lg border border-forest-200 bg-forest-50/50 p-3">
+          <label className="flex items-center gap-2 text-sm font-medium text-forest-900">
+            <input
+              type="checkbox"
+              checked={isRush}
+              onChange={(e) => setIsRush(e.target.checked)}
+              className="h-4 w-4"
+            />
+            Rush order
+            <span className="font-normal text-forest-500">
+              (standard lead time is 3–5 days)
+            </span>
+          </label>
+          <div>
+            <label
+              htmlFor="special-instructions"
+              className="block text-sm font-medium text-forest-900"
+            >
+              Special instructions{" "}
+              <span className="font-normal text-forest-500">(optional)</span>
+            </label>
+            <textarea
+              id="special-instructions"
+              value={specialInstructions}
+              onChange={(e) => setSpecialInstructions(e.target.value)}
+              rows={2}
+              maxLength={500}
+              placeholder="Packing notes, delivery window, who to hand it to…"
+              className="mt-1 w-full rounded-md border border-forest-200 px-3 py-2 text-sm text-forest-900 focus:border-forest-600 focus:outline-none"
+            />
+          </div>
+        </div>
 
         <button
           type="button"

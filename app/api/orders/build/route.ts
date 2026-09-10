@@ -39,6 +39,8 @@ export async function POST(request: NextRequest) {
     deliveryMethod?: string;
     deliveryFee?: number;
     shippingAddress?: string;
+    isRush?: boolean;
+    specialInstructions?: string;
     confirm?: boolean;
   };
 
@@ -94,7 +96,16 @@ export async function POST(request: NextRequest) {
     .join("\n");
   const rawMessage = `Built in Order Desk (fast-track):\n${summary}`;
 
-  const order = await createOrder({ company, customerId, rawMessage });
+  const order = await createOrder({
+    company,
+    customerId,
+    rawMessage,
+    isRush: body.isRush === true,
+    specialInstructions:
+      typeof body.specialInstructions === "string" && body.specialInstructions.trim()
+        ? body.specialInstructions.trim().slice(0, 500)
+        : undefined,
+  });
   try {
     order.items = items;
     order.options.chargeVat = body.chargeVat === true;

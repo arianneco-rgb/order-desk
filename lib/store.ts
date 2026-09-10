@@ -70,6 +70,8 @@ async function newOrder(input: {
   company: string;
   customerId?: string;
   rawMessage: string;
+  isRush?: boolean;
+  specialInstructions?: string;
 }): Promise<Order> {
   const now = new Date();
   return {
@@ -77,6 +79,8 @@ async function newOrder(input: {
     company: input.company,
     customerId: input.customerId,
     rawMessage: input.rawMessage,
+    isRush: input.isRush,
+    specialInstructions: input.specialInstructions,
     items: [],
     total: 0,
     status: "queued",
@@ -121,6 +125,8 @@ export async function createOrder(input: {
   company: string;
   customerId?: string;
   rawMessage: string;
+  isRush?: boolean;
+  specialInstructions?: string;
 }): Promise<Order> {
   const order = await newOrder(input);
   if (!isLive()) {
