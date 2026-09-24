@@ -154,21 +154,42 @@ function proofRefs(order: Order): string[] {
  * same-amount collisions with no manual pick needed); falls back to amount
  * (to the centavo), first unclaimed match wins. Never auto-confirms.
  */
+/** Unclaimed by anyone else, newest first. */
+function selectable(order: Order, transactions: BpiTransaction[]): BpiTransaction[] {
+  return transactions
+    .filter((t) => !t.matchedOrderId || t.matchedOrderId === order.id)
+    // The sheet is appended oldest-first and nothing re-ordered it, so the
+    // old code's "first amount match" was the OLDEST payment with that
+    // amount — reliably the wrong one for a cafe that orders regularly.
+    .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+}
+
+/**
+ * The single best guess for this order — a SUGGESTION only. It is shown to
+ * Joey and never attached automatically: a wrong auto-match that only needs
+ * one confirming click is more dangerous than no match at all.
+ *
+ * Reference beats amount (the InstaPay reference is end-to-end unique), and
+ * among equal-amount candidates the one closest to when the draft was
+ * created wins.
+ */
 export function findMatch(order: Order, transactions: BpiTransaction[]): BpiMatch | null {
+  const pool = selectable(order, transactions);
   const refs = proofRefs(order);
   if (refs.length > 0) {
-    for (const t of transactions) {
-      if (t.matchedOrderId && t.matchedOrderId !== order.id) continue;
-      if (refs.includes(t.ref.trim().toUpperCase())) return toMatch(t, "reference");
-    }
+    const byRef = pool.find((t) => refs.includes(t.ref.trim().toUpperCase()));
+    if (byRef) return toMatch(byRef, "reference");
   }
 
-  for (const t of transactions) {
-    if (t.matchedOrderId && t.matchedOrderId !== order.id) continue; // already claimed by a different order
-    if (Math.abs(t.amount - order.total) > 0.009) continue;
-    return toMatch(t, "amount");
-  }
-  return null;
+  const exact = pool.filter((t) => Math.abs(t.amount - order.total) <= 0.009);
+  if (exact.length === 0) return null;
+
+  const anchor = Date.parse(order.draftCreatedAt ?? order.createdAt);
+  if (!Number.isFinite(anchor)) return toMatch(exact[0], "amount");
+  const nearest = exact.reduce((best, t) =>
+    Math.abs(Date.parse(t.date) - anchor) < Math.abs(Date.parse(best.date) - anchor) ? t : best
+  );
+  return toMatch(nearest, "amount");
 }
 
 /**
@@ -180,10 +201,14 @@ export function findMatch(order: Order, transactions: BpiTransaction[]): BpiMatc
 export function otherCandidates(
   transactions: BpiTransaction[],
   excludeMatchKey: string | undefined,
-  limit = 8
+  limit = 60
 ): BpiMatch[] {
+  // Newest first, and a wide enough window to search through — Joey picks
+  // from this list rather than trusting a single guess, so it has to
+  // contain the right payment even when the suggestion is wrong.
   return transactions
     .filter((t) => !t.matchedOrderId && t.matchKey !== excludeMatchKey)
+    .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
     .slice(0, limit)
     .map((t) => toMatch(t));
 }
@@ -229,6 +254,34 @@ export async function findByMatchKey(order: Order, matchKey: string): Promise<Bp
   return found ? toMatch(found) : null;
 }
 
+/**
+ * Resolves the keys Joey selected. A split payment is several transfers for
+ * one order, so this returns a list; unknown or already-claimed keys come
+ * back in `rejected` rather than being silently dropped.
+ */
+export async function findByMatchKeys(
+  order: Order,
+  matchKeys: string[]
+): Promise<{ matches: BpiMatch[]; rejected: string[] }> {
+  const transactions = await transactionsFor(order);
+  const matches: BpiMatch[] = [];
+  const rejected: string[] = [];
+  for (const key of matchKeys) {
+    const t = transactions.find(
+      (x) => x.matchKey === key && (!x.matchedOrderId || x.matchedOrderId === order.id)
+    );
+    if (t) matches.push(toMatch(t));
+    else rejected.push(key);
+  }
+  return { matches, rejected };
+}
+
+/** Every transaction attached to an order, treating the legacy single field as a one-item list. */
+export function attachedMatches(order: Order): BpiMatch[] {
+  if (order.payment.bpiMatches?.length) return order.payment.bpiMatches;
+  return order.payment.bpiMatch ? [order.payment.bpiMatch] : [];
+}
+
 export async function lookupOrder(order: Order): Promise<BpiLookup> {
   const transactions = await transactionsFor(order);
   const match = findMatch(order, transactions);
@@ -248,6 +301,23 @@ export async function matchOrder(order: Order): Promise<BpiMatch | null> {
  * until one of them is actually confirmed. No-ops for simulated/test
  * orders, which have no real sheet row to claim.
  */
+/**
+ * Claims every transaction attached to the order. Sequential on purpose:
+ * if the second of a split payment is already spoken for, the first stays
+ * claimed and the error names it, rather than a partial claim disappearing
+ * silently. Joey then deselects and retries.
+ */
+export async function claimTransactions(
+  order: Order,
+  matchKeys: string[]
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  for (const key of matchKeys) {
+    const result = await claimTransaction(order, key);
+    if (!result.ok) return result;
+  }
+  return { ok: true };
+}
+
 export async function claimTransaction(
   order: Order,
   matchKey: string

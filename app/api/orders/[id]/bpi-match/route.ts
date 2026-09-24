@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { lookupOrder, findByMatchKey } from "@/lib/bpi";
+import { lookupOrder, findByMatchKeys, attachedMatches } from "@/lib/bpi";
 import { bpiMode } from "@/lib/config";
 import { getOrder, saveOrder, tryLockOrder, unlockOrder } from "@/lib/store";
 
@@ -27,22 +27,22 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  if (!(await tryLockOrder(params.id))) {
-    // Another money-route action (confirm-payment, a draft/options edit,
-    // or an overlapping check) is in flight — benign, the next poll retries.
-    return NextResponse.json({ error: "busy", locked: true }, { status: 409 });
-  }
   try {
     const order = await getOrder(params.id);
     if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
 
     const { match, candidates } = await lookupOrder(order);
-    order.payment.bpiMatch = match ?? undefined;
-    order.payment.noMatch = !match;
-    await saveOrder(order);
+    // READ ONLY. This used to write the computed match onto the order and
+    // save it, which caused two problems: the suggestion arrived already
+    // applied, so confirming a wrong one took a single click; and because
+    // the pane polls every 8 seconds, a transaction Joey picked by hand was
+    // overwritten by the next recomputed guess. Selection now happens only
+    // through POST below, and with nothing to write there's no read-modify-
+    // write to protect, so the money-route lock isn't needed here either.
     return NextResponse.json({
       order,
-      match,
+      suggestion: match,
+      selected: attachedMatches(order),
       candidates,
       // Test orders always match the simulated log (see lib/bpi.ts),
       // regardless of the global BPI mode.
@@ -53,8 +53,6 @@ export async function GET(
       { error: err instanceof Error ? err.message : "Couldn't check the BPI transaction log." },
       { status: 502 }
     );
-  } finally {
-    await unlockOrder(params.id);
   }
 }
 
@@ -70,22 +68,48 @@ export async function POST(
     const order = await getOrder(params.id);
     if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
 
-    const body = (await request.json().catch(() => ({}))) as { matchKey?: string };
-    if (!body.matchKey) {
-      return NextResponse.json({ error: "matchKey is required." }, { status: 400 });
+    // The full selection, not a delta — an empty list clears it, which is
+    // how Joey rejects a wrong suggestion.
+    const body = (await request.json().catch(() => ({}))) as {
+      matchKeys?: unknown;
+      matchKey?: string;
+    };
+    const keys = Array.isArray(body.matchKeys)
+      ? body.matchKeys.filter((k): k is string => typeof k === "string")
+      : typeof body.matchKey === "string"
+        ? [body.matchKey]
+        : null;
+    if (keys === null) {
+      return NextResponse.json({ error: "matchKeys is required." }, { status: 400 });
+    }
+    if (keys.length > 10) {
+      return NextResponse.json(
+        { error: "That's more than 10 transactions for one order — check the selection." },
+        { status: 400 }
+      );
     }
 
-    const match = await findByMatchKey(order, body.matchKey);
-    if (!match) {
+    const unique = Array.from(new Set(keys));
+    const { matches, rejected } = await findByMatchKeys(order, unique);
+    if (rejected.length > 0) {
       return NextResponse.json(
-        { error: "That transaction is no longer available — someone else may have just claimed it." },
+        {
+          error:
+            rejected.length === unique.length
+              ? "That transaction is no longer available — someone else may have just claimed it."
+              : `${rejected.length} of the selected transactions are no longer available — refresh and pick again.`,
+        },
         { status: 409 }
       );
     }
-    order.payment.bpiMatch = match;
-    order.payment.noMatch = false;
+
+    order.payment.bpiMatches = matches;
+    // Legacy field kept in step so anything still reading it (an old paid
+    // order's invoice, say) sees the first selected transaction.
+    order.payment.bpiMatch = matches[0];
+    order.payment.noMatch = matches.length === 0;
     await saveOrder(order);
-    return NextResponse.json({ order, match });
+    return NextResponse.json({ order, selected: matches });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Couldn't apply that transaction." },

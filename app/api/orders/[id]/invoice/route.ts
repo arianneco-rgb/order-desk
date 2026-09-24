@@ -33,16 +33,27 @@ async function buildPreview(orderId: string) {
   const customer = customers.find((c) => c.shopifyId === order.customerId);
 
   let profile: CustomerProfile | null = null;
+  // A lookup FAILURE and "this cafe has no profile yet" are different
+  // things, and conflating them hid a real outage: the Customer Profiles
+  // tab was renamed in the Invoice Generator sheet, so every lookup threw
+  // — and because the error was only logged, the invoice just rendered
+  // with empty customer fields as though the cafe were simply new.
+  let profileError: string | undefined;
   try {
     profile = await getCustomerProfile(customer?.phone, order.company);
   } catch (err) {
     console.error("getCustomerProfile failed:", err);
+    profileError =
+      err instanceof Error && /tab not found/i.test(err.message)
+        ? "Can't read Customer Profiles — the tab is missing or renamed in the Invoice Generator sheet. Customer details won't fill in until it's restored."
+        : "Couldn't read the Customer Profiles sheet, so customer details didn't fill in.";
   }
 
   return {
     order,
     lines,
     profile,
+    profileError,
     preparers: PREPARERS,
     mismatch: vatMismatch(order.options.chargeVat, profile),
   };
@@ -106,6 +117,17 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       profile = await getCustomerProfile(customer?.phone, order.company);
     } catch (err) {
       console.error("getCustomerProfile failed:", err);
+      // Falling through here would take the "no profile yet" path and
+      // append a NEW Customer Profiles row — into a sheet we just failed to
+      // read. That's how duplicate profiles and duplicate merchant codes
+      // get created. Refuse and say why.
+      return NextResponse.json(
+        {
+          error:
+            "Can't read Customer Profiles in the Invoice Generator sheet, so the invoice can't be generated safely. Check that the \"Customer Profiles\" tab exists and hasn't been renamed.",
+        },
+        { status: 502 }
+      );
     }
 
     // No existing row — create one from Order Desk's own data instead of

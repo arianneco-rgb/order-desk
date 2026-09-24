@@ -3,7 +3,7 @@ import { getCatalog, completeDraftAsPaid } from "@/lib/shopify";
 import { priceItems, itemsText } from "@/lib/pricing";
 import { paidConfirmationReply } from "@/lib/templates";
 import { appendOrderHistory } from "@/lib/sheets";
-import { claimTransaction } from "@/lib/bpi";
+import { attachedMatches, claimTransactions } from "@/lib/bpi";
 import { getOrder, saveOrder, tryLockOrder, unlockOrder } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
@@ -40,11 +40,25 @@ export async function POST(
     const body = (await request.json().catch(() => ({}))) as {
       manualOverride?: boolean;
     };
-    if (!order.payment.bpiMatch && !body.manualOverride) {
+    const selected = attachedMatches(order);
+    if (selected.length === 0 && !body.manualOverride) {
       return NextResponse.json(
         {
           error:
-            "No BPI transaction matched for this amount yet — verify manually or wait.",
+            "No BPI transaction selected yet — pick one from the list, or tick the manual-verification box.",
+        },
+        { status: 409 }
+      );
+    }
+
+    // Split payments are the reason several can be attached, so the check is
+    // on the SUM. Under-payment is refused unless Joey overrides; a small
+    // over-payment is normal (cafes round up) and passes with a warning.
+    const paid = selected.reduce((sum, m) => sum + m.amount, 0);
+    if (selected.length > 0 && paid + 0.009 < order.total && !body.manualOverride) {
+      return NextResponse.json(
+        {
+          error: `Selected transfers total ₱${paid.toLocaleString()} but the order is ₱${order.total.toLocaleString()} — add the missing transfer, or tick the manual-verification box.`,
         },
         { status: 409 }
       );
@@ -65,8 +79,11 @@ export async function POST(
     // orders at preview time; only one can win the claim here). This must
     // stay sequential: claiming after Shopify would let a double-submit mark
     // two orders paid against one transfer.
-    if (order.payment.bpiMatch) {
-      const claim = await claimTransaction(order, order.payment.bpiMatch.matchKey);
+    if (selected.length > 0) {
+      const claim = await claimTransactions(
+        order,
+        selected.map((m) => m.matchKey)
+      );
       if (!claim.ok) {
         return NextResponse.json({ error: claim.error }, { status: 409 });
       }

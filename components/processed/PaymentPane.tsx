@@ -8,6 +8,7 @@ import { CopyButton } from "@/components/CopyButton";
 import { TestBadge } from "@/components/TestBadge";
 import { Modal } from "@/components/Modal";
 import { StagedProgress, Spinner } from "@/components/StagedProgress";
+import { PaymentMatcher } from "./PaymentMatcher";
 import { FULFILMENT_TEMPLATES, fulfilmentReplyFor } from "@/lib/templates";
 import { formatTime } from "./format";
 
@@ -44,11 +45,15 @@ export function PaymentPane({
   const [removingIndex, setRemovingIndex] = useState<number | null>(null);
   const [lightbox, setLightbox] = useState<ProofOfPayment | null>(null);
   const [candidates, setCandidates] = useState<BpiMatch[]>([]);
-  const [picking, setPicking] = useState<string | null>(null);
+  const [suggestion, setSuggestion] = useState<BpiMatch | null>(null);
+  const [picking, setPicking] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const orderId = order?.id ?? null;
-  const match = order?.payment.bpiMatch ?? null;
+  // Legacy single-match orders are read as a one-item list.
+  const selectedMatches =
+    order?.payment.bpiMatches ?? (order?.payment.bpiMatch ? [order.payment.bpiMatch] : []);
+  const hasSelection = selectedMatches.length > 0;
   const isPaid = order?.status === "paid";
   const proofs = order?.payment.proofs ?? [];
 
@@ -60,6 +65,7 @@ export function PaymentPane({
     setInboxError(null);
     setLightbox(null);
     setCandidates([]);
+    setSuggestion(null);
     if (fileRef.current) fileRef.current.value = "";
   }, [orderId]);
 
@@ -80,6 +86,7 @@ export function PaymentPane({
       setInboxError(null);
       setSimulated(!!data.simulated);
       setCandidates(Array.isArray(data.candidates) ? data.candidates : []);
+      setSuggestion(data.suggestion ?? null);
       if (data.order) onOrderUpdate(data.order);
     } catch {
       setInboxError("Couldn't reach Order Desk to check the inbox — check your connection.");
@@ -88,32 +95,32 @@ export function PaymentPane({
     }
   }, [orderId, onOrderUpdate]);
 
-  async function pickCandidate(matchKey: string) {
+  /** Sends the WHOLE selection; an empty list clears it. */
+  async function applySelection(matchKeys: string[]) {
     if (!orderId) return;
-    setPicking(matchKey);
+    setPicking(true);
     setError(null);
     try {
       const res = await fetch(`/api/orders/${orderId}/bpi-match`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ matchKey }),
+        body: JSON.stringify({ matchKeys }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data.error || `Couldn't apply that transaction (HTTP ${res.status}).`);
       }
       onOrderUpdate(data.order);
-      setCandidates([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't apply that transaction.");
     } finally {
-      setPicking(null);
+      setPicking(false);
     }
   }
 
   // Check on select, then poll every 5s while this order is selected & unmatched.
   const shouldPoll =
-    !!order && order.status === "draft_created" && !match && !order.payment.confirmed;
+    !!order && order.status === "draft_created" && !order.payment.confirmed;
   useEffect(() => {
     if (!shouldPoll) return;
     void checkInbox();
@@ -362,44 +369,7 @@ export function PaymentPane({
             <p className="text-sm font-semibold text-forest-800">
               BPI payment verification
             </p>
-            {match ? (
-              <div className="mt-2 rounded-lg border border-forest-300 bg-forest-50 p-3">
-                <p className="flex items-center justify-between gap-2 text-sm font-semibold text-forest-800">
-                  Transfer received
-                  <span className="flex items-center gap-1.5">
-                    {simulated && (
-                      <span className="rounded bg-forest-200 px-1.5 py-0.5 text-[11px] font-medium text-forest-800">
-                        simulated
-                      </span>
-                    )}
-                    <span className="rounded bg-forest-700 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white">
-                      {match.matchedBy === "reference" ? "Ref match" : "Match"}
-                    </span>
-                  </span>
-                </p>
-                <p className="mt-1.5 text-sm font-semibold text-forest-900">
-                  {formatPeso(match.amount)}
-                  {match.fromAccountLast4 ? ` · account ending in ${match.fromAccountLast4}` : ""}
-                  {match.sourceBank ? ` (${match.sourceBank})` : ""}
-                </p>
-                <p className="mt-0.5 text-xs text-forest-600">
-                  {match.matchedBy === "reference" ? "✓ " : ""}Ref {match.ref} · {formatTime(match.date) || match.date}
-                  {order.shopifyDraftName
-                    ? ` · matched to Draft ${order.shopifyDraftName.replace(/ \((mock|test)\)$/, "")}`
-                    : ""}
-                </p>
-                {!match.settled && (
-                  <p className="mt-1.5 rounded bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900">
-                    ⚠️ Not yet credited — this is a pre-advice (PESONet says "will be credited within the day"), the money isn't in the account yet.
-                  </p>
-                )}
-                {match.warnings.length > 0 && (
-                  <p className="mt-1.5 rounded bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900">
-                    ⚠️ {match.warnings.join(", ")}
-                  </p>
-                )}
-              </div>
-            ) : inboxError ? (
+            {inboxError ? (
               <div className="mt-2 rounded-lg border border-red-300 bg-red-50 p-3">
                 <p className="text-sm font-semibold text-red-900">Couldn&apos;t check the inbox</p>
                 <p className="mt-0.5 text-sm text-red-700">{inboxError}</p>
@@ -413,60 +383,21 @@ export function PaymentPane({
                 </button>
               </div>
             ) : (
-              <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
-                <p className="text-sm text-amber-900">
-                  No exact amount match yet — verify manually or wait.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void checkInbox()}
-                  disabled={checking}
-                  className="mt-2 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-50"
-                >
-                  {checking ? "Checking…" : "Re-check inbox"}
-                </button>
-
-                {candidates.length > 0 && (
-                  <div className="mt-3 border-t border-amber-200 pt-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
-                      Or pick one manually
-                    </p>
-                    <div className="mt-1.5 space-y-1.5">
-                      {candidates.map((c) => (
-                        <div
-                          key={c.matchKey}
-                          className="flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-white px-2.5 py-1.5"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-xs font-semibold text-forest-900">
-                              {formatPeso(c.amount)}
-                              {c.fromAccountLast4 ? ` · ···${c.fromAccountLast4}` : ""}
-                            </p>
-                            <p className="truncate text-[11px] text-forest-500">
-                              Ref {c.ref} · {formatTime(c.date) || c.date}
-                              {!c.settled ? " · not yet credited" : ""}
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => void pickCandidate(c.matchKey)}
-                            disabled={picking !== null}
-                            className="shrink-0 rounded-md border border-forest-300 bg-white px-2 py-1 text-[11px] font-semibold text-forest-800 transition-colors hover:bg-forest-50 disabled:opacity-50"
-                          >
-                            {picking === c.matchKey ? "Applying…" : "Use this"}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+              <PaymentMatcher
+                orderTotal={order.total}
+                selected={selectedMatches}
+                suggestion={suggestion}
+                candidates={candidates}
+                simulated={simulated}
+                busy={picking}
+                onChange={(keys) => void applySelection(keys)}
+              />
             )}
           </div>
 
           {/* Confirm */}
           <div>
-            {!match && (
+            {!hasSelection && (
               <label className="mt-2 flex items-start gap-2 text-sm text-forest-700">
                 <input
                   type="checkbox"
@@ -480,7 +411,7 @@ export function PaymentPane({
             <button
               type="button"
               onClick={confirmPayment}
-              disabled={confirming || (!match && !manualOverride)}
+              disabled={confirming || (!hasSelection && !manualOverride)}
               className="mt-3 flex w-full items-center justify-center gap-2 rounded-md bg-forest-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-forest-800 disabled:opacity-50"
             >
               {confirming && <Spinner className="h-4 w-4 text-white" />}

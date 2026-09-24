@@ -86,7 +86,17 @@ export interface ProofOfPayment {
 export interface PaymentInfo {
   /** One or more screenshots/slips — cafes sometimes send partial or split payments. */
   proofs?: ProofOfPayment[];
+  /**
+   * Legacy single match. Orders paid before multi-select shipped still
+   * carry it, so it's read as a one-item list — never written any more.
+   */
   bpiMatch?: BpiMatch;
+  /**
+   * The transactions Joey has explicitly attached to this order. A list
+   * because cafes split one order across two or more transfers. Nothing
+   * lands here automatically: the app suggests, Joey selects.
+   */
+  bpiMatches?: BpiMatch[];
   /** True when a match was searched for and none found (drives the error state). */
   noMatch?: boolean;
   confirmed: boolean;

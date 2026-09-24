@@ -36,6 +36,7 @@ interface PreviewData {
   lines: InvoiceLineItem[];
   profile: CustomerProfile | null;
   preparers: string[];
+  profileError?: string;
   mismatch: boolean;
   invoiceNumber?: string;
   alreadyGenerated?: boolean;
@@ -104,7 +105,7 @@ export default function InvoicePage({ params }: { params: { orderId: string } })
     );
   }
 
-  const { order, lines, profile, preparers, mismatch } = data;
+  const { order, lines, profile, profileError, preparers, mismatch } = data;
   const generated = Boolean(order.invoiceNumber);
   const totals = order.totals;
   const subtotal = totals?.subtotal ?? lines.reduce((s, l) => s + l.amount, 0);
@@ -193,6 +194,12 @@ export default function InvoicePage({ params }: { params: { orderId: string } })
           </button>
         )}
       </div>
+
+      {profileError && (
+        <p className="mb-4 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800 print:hidden">
+          ⚠️ {profileError}
+        </p>
+      )}
 
       {mismatch && (
         <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 print:hidden">
@@ -515,14 +522,17 @@ export default function InvoicePage({ params }: { params: { orderId: string } })
           </p>
         </div>
 
-        <p className="mt-3 text-right text-xs">RMC Ritual Trading Corporation</p>
-
-        <p className="mt-10 text-sm">
-          Prepared by:{" "}
-          <span className="inline-block min-w-[220px] border-b border-black">
-            {order.invoicePreparedBy}
-          </span>
-        </p>
+        {/* Signature block. The company name and the "Prepared by" line are
+            one right-hand column: previously the name was right-aligned
+            across the full width while Prepared by sat hard left, so the two
+            halves of the same signature block didn't line up. */}
+        <div className="mt-3 flex justify-end">
+          <div className="w-[260px] text-left text-xs">
+            <p>RMC Ritual Trading Corporation</p>
+            <p className="mt-10 border-b border-black">&nbsp;{order.invoicePreparedBy}</p>
+            <p className="mt-1 text-[11px]">Prepared by</p>
+          </div>
+        </div>
       </div>
     </div>
   );
