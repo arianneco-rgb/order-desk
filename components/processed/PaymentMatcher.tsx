@@ -5,6 +5,7 @@ import type { BpiMatch } from "@/lib/types";
 import { formatPeso } from "@/lib/conversions";
 import { Spinner } from "@/components/StagedProgress";
 import { formatTime } from "./format";
+import { AMBIGUITY_GAP, MIN_SCORE, scoreRef } from "@/lib/ref-search";
 
 /**
  * Pick which BPI transfers paid this order.
@@ -49,24 +50,44 @@ export function PaymentMatcher({
     return all.filter((c) => !seen.has(c.matchKey) && seen.add(c.matchKey));
   }, [suggestion, candidates]);
 
-  const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return pool;
-    // Searches the fields actually printed on a bank slip, so Joey can type
-    // whatever she's looking at: an amount, a reference, a bank, last 4.
+  const { results, ambiguous } = useMemo(() => {
+    const q = query.trim();
+    if (!q) return { results: pool, ambiguous: false };
+
+    // Reference matching uses Marco's BizLink scoring (lib/ref-search.ts):
+    // it handles someone typing just the trailing serial off a screenshot,
+    // which plain substring matching misses entirely.
+    //
+    // The other fields on a bank slip — amount, bank, last 4, date — stay
+    // plainly searchable, scored below any real reference hit so they can
+    // never outrank one.
+    const lower = q.toLowerCase();
     const digits = q.replace(/[^\d.]/g, "");
-    return pool.filter((c) => {
-      const hay = [
-        c.ref,
-        c.sourceBank ?? "",
-        c.fromAccountLast4 ?? "",
-        String(c.amount),
-        formatTime(c.date) || c.date,
-      ]
-        .join(" ")
-        .toLowerCase();
-      return hay.includes(q) || (digits.length > 0 && hay.includes(digits));
-    });
+    const scored = pool
+      .map((c) => {
+        const byRef = scoreRef(q, c.ref);
+        const hay = [
+          c.sourceBank ?? "",
+          c.fromAccountLast4 ?? "",
+          String(c.amount),
+          formatTime(c.date) || c.date,
+        ]
+          .join(" ")
+          .toLowerCase();
+        const byField =
+          hay.includes(lower) || (digits.length > 0 && hay.includes(digits)) ? 70 : 0;
+        return { c, score: Math.max(byRef, byField) };
+      })
+      .filter((x) => x.score >= MIN_SCORE)
+      .sort((a, b) => b.score - a.score);
+
+    return {
+      results: scored.map((x) => x.c),
+      // Two near-equal scores mean the top hit isn't actually the better
+      // answer — say so rather than letting the ordering imply it is.
+      ambiguous:
+        scored.length > 1 && scored[0].score - scored[1].score < AMBIGUITY_GAP,
+    };
   }, [pool, query]);
 
   function toggle(key: string) {
@@ -181,6 +202,12 @@ export function PaymentMatcher({
           />
           {busy && <Spinner className="h-4 w-4 shrink-0" />}
         </div>
+
+        {ambiguous && (
+          <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
+            Several transfers match about equally well — check the reference before selecting.
+          </p>
+        )}
 
         {results.length === 0 ? (
           <p className="mt-2 text-xs text-forest-500">
