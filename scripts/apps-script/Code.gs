@@ -93,6 +93,123 @@ const BPI_MATCH_KEY_COLUMN = 2;
 const BPI_MATCHED_ORDER_COLUMN = 12;
 const BPI_MATCHED_AT_COLUMN = 13;
 
+/**
+ * PAYMENT LEDGER + PROOF STORAGE
+ *
+ * Replaces auto-matching as the primary record of payment. Joey/JJ upload a
+ * screenshot per transfer; each upload becomes one ledger row and one Drive
+ * file, and Wheng reconciles weekly against the bank.
+ *
+ * One row PER TRANSFER, not per order — that's what makes split payments and
+ * withholding tax ordinary rather than exceptional: three transfers for one
+ * order are three rows, and the Balance column shows what's still open.
+ *
+ * The folder is created on first use if PAYMENT_PROOFS_FOLDER_ID is blank,
+ * and its id is written to Script Properties so it survives a code paste.
+ */
+const PAYMENT_LEDGER_SHEET_ID = '1ZMk4C32nOx6vWCqHzLBbdSEctJQLOKCyNU7zIVoanwc';
+const PAYMENT_LEDGER_TAB = 'Payment Ledger';
+const PAYMENT_PROOFS_FOLDER_NAME = 'RMC Payment Proofs — Order Desk';
+const PAYMENT_LEDGER_HEADER = [
+  'Logged At', 'Payment Date', 'Order #', 'Order Desk ID', 'Customer Name',
+  'Order Total', 'Amount Paid', 'Balance', 'Bank / Method', 'Reference No.',
+  'Screenshot', 'Uploaded By', 'Notes', 'Recon Status', 'Recon Date', 'Recon By',
+];
+
+function paymentProofsFolder_() {
+  const props = PropertiesService.getScriptProperties();
+  const stored = props.getProperty('PAYMENT_PROOFS_FOLDER_ID');
+  if (stored) {
+    try { return DriveApp.getFolderById(stored); } catch (e) { /* recreate below */ }
+  }
+  const existing = DriveApp.getFoldersByName(PAYMENT_PROOFS_FOLDER_NAME);
+  const folder = existing.hasNext()
+    ? existing.next()
+    : DriveApp.createFolder(PAYMENT_PROOFS_FOLDER_NAME);
+  props.setProperty('PAYMENT_PROOFS_FOLDER_ID', folder.getId());
+  return folder;
+}
+
+function getPaymentLedgerSheet_() {
+  const ss = SpreadsheetApp.openById(PAYMENT_LEDGER_SHEET_ID);
+  let sheet = ss.getSheetByName(PAYMENT_LEDGER_TAB);
+  if (!sheet) {
+    // A CSV import names the first tab after the file, so adopt whatever
+    // single tab exists rather than leaving a stray empty one behind.
+    const all = ss.getSheets();
+    sheet = all.length === 1 ? all[0].setName(PAYMENT_LEDGER_TAB) : ss.insertSheet(PAYMENT_LEDGER_TAB);
+  }
+  const first = sheet.getRange(1, 1, 1, PAYMENT_LEDGER_HEADER.length).getValues()[0];
+  if (!first.some(function (v) { return v !== ''; })) {
+    sheet.getRange(1, 1, 1, PAYMENT_LEDGER_HEADER.length)
+      .setValues([PAYMENT_LEDGER_HEADER]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+/** Saves one screenshot to Drive and returns its link. */
+function savePaymentProof(input) {
+  const match = String(input.dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return { error: 'dataUrl must be a base64 data URL.' };
+  const blob = Utilities.newBlob(
+    Utilities.base64Decode(match[2]),
+    match[1],
+    input.fileName || ('proof-' + new Date().getTime())
+  );
+  const file = paymentProofsFolder_().createFile(blob);
+  // Anyone with the link can view: Wheng reconciles from the sheet and must
+  // be able to open a screenshot without being granted each file one by one.
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (e) { /* domain policy may forbid link sharing — the link still works internally */ }
+  return { fileId: file.getId(), url: file.getUrl() };
+}
+
+/**
+ * Appends one transfer. Balance is computed here from what the ledger
+ * already holds for this order, so two uploads minutes apart can't both
+ * report the full amount outstanding.
+ */
+function appendPaymentLedger(row) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const sheet = getPaymentLedgerSheet_();
+    const lastRow = sheet.getLastRow();
+    let alreadyPaid = 0;
+    if (lastRow > 1) {
+      const existing = sheet.getRange(2, 4, lastRow - 1, 4).getValues(); // D..G
+      existing.forEach(function (r) {
+        if (String(r[0]) === String(row.orderDeskId)) alreadyPaid += Number(r[3]) || 0;
+      });
+    }
+    const amount = Number(row.amountPaid) || 0;
+    const total = Number(row.orderTotal) || 0;
+    const balance = total - (alreadyPaid + amount);
+
+    sheet.appendRow([
+      new Date(),
+      row.paymentDate || '',
+      row.orderNo || '',
+      row.orderDeskId || '',
+      row.customerName || '',
+      total,
+      amount,
+      balance,
+      row.bank || '',
+      row.reference || '',
+      row.screenshotUrl || '',
+      row.uploadedBy || '',
+      row.notes || '',
+      '', '', '',  // Recon columns — Wheng's, never written by the app
+    ]);
+    return { ok: true, balance: balance, alreadyPaid: alreadyPaid + amount };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function doGet(e) {
   return handle(e);
 }
@@ -131,6 +248,10 @@ function handle(e) {
         return json({ profile: findCustomerProfile(body.contactNumber, body.nameOrCompany) });
       case 'getOrCreateCustomerProfile':
         return json(getOrCreateCustomerProfile(body));
+      case 'savePaymentProof':
+        return json(savePaymentProof(body));
+      case 'appendPaymentLedger':
+        return json(appendPaymentLedger(body));
       case 'logInvoice':
         return json(logInvoice(body));
       default:

@@ -48,6 +48,10 @@ export function PaymentPane({
   const [suggestion, setSuggestion] = useState<BpiMatch | null>(null);
   const [picking, setPicking] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  // Captured BEFORE the file picker opens, because the upload fires as soon
+  // as a file is chosen — there's no later moment to ask.
+  const [amountPaid, setAmountPaid] = useState("");
+  const [proofNotes, setProofNotes] = useState("");
 
   const orderId = order?.id ?? null;
   // Legacy single-match orders are read as a one-item list.
@@ -66,6 +70,8 @@ export function PaymentPane({
     setLightbox(null);
     setCandidates([]);
     setSuggestion(null);
+    setAmountPaid("");
+    setProofNotes("");
     if (fileRef.current) fileRef.current.value = "";
   }, [orderId]);
 
@@ -146,13 +152,21 @@ export function PaymentPane({
         const res = await fetch(`/api/orders/${orderId}/proof`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dataUrl: reader.result, fileName: file.name }),
+          body: JSON.stringify({
+            dataUrl: reader.result,
+            fileName: file.name,
+            amountPaid: amountPaid === "" ? undefined : Number(amountPaid),
+            notes: proofNotes.trim() || undefined,
+          }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           throw new Error(data.error || `Upload failed (HTTP ${res.status}).`);
         }
         onOrderUpdate(data.order);
+        setAmountPaid("");
+        setProofNotes("");
+        if (data.ledgerWarning) setError(data.ledgerWarning);
         void checkInbox(); // re-check the inbox right after proof upload
       } catch (err) {
         setError(
@@ -262,6 +276,33 @@ export function PaymentPane({
           <div>
             <p className="text-sm font-semibold text-forest-800">
               Proof from Viber
+            </p>
+            <div className="mt-2 flex flex-wrap items-end gap-2">
+              <label className="text-xs text-forest-700">
+                Amount paid
+                <input
+                  type="number"
+                  min={0}
+                  value={amountPaid}
+                  onChange={(e) => setAmountPaid(e.target.value)}
+                  placeholder={String(order.total)}
+                  className="mt-0.5 block w-32 rounded-md border border-forest-300 px-2 py-1 text-sm"
+                />
+              </label>
+              <label className="min-w-[10rem] flex-1 text-xs text-forest-700">
+                Note (optional)
+                <input
+                  value={proofNotes}
+                  onChange={(e) => setProofNotes(e.target.value)}
+                  maxLength={300}
+                  placeholder="e.g. 2% withholding, split 1 of 2"
+                  className="mt-0.5 block w-full rounded-md border border-forest-300 px-2 py-1 text-sm"
+                />
+              </label>
+            </div>
+            <p className="mt-1 text-[11px] text-forest-500">
+              Leave the amount blank if the transfer covers the full {formatPeso(order.total)}.
+              Each upload becomes one row in the Payment Ledger for Wheng&apos;s recon.
             </p>
             <label className="mt-2 flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-forest-300 bg-forest-50/50 px-4 py-5 text-center transition-colors hover:border-forest-400 hover:bg-forest-50">
               <span className="text-sm font-medium text-forest-800">

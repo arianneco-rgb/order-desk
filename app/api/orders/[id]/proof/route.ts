@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrder, saveOrder } from "@/lib/store";
 import { analyzeProof, proofReaderEnabled } from "@/lib/proof-reader";
+import { appendPaymentLedger, savePaymentProofToDrive } from "@/lib/payment-ledger";
 import type { ProofOfPayment } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +22,9 @@ export async function POST(
   const body = (await request.json().catch(() => ({}))) as {
     dataUrl?: string;
     fileName?: string;
+    amountPaid?: number;
+    paymentDate?: string;
+    notes?: string;
   };
   if (!body.dataUrl?.startsWith("data:")) {
     return NextResponse.json({ error: "dataUrl required" }, { status: 400 });
@@ -43,6 +47,9 @@ export async function POST(
     url: body.dataUrl,
     name: body.fileName || `proof-${proofs.length + 1}`,
     uploadedAt: new Date().toISOString(),
+    amountPaid: Number.isFinite(body.amountPaid) ? Number(body.amountPaid) : undefined,
+    paymentDate: body.paymentDate?.slice(0, 40),
+    notes: body.notes?.trim().slice(0, 300) || undefined,
   };
 
   // Best-effort screenshot reading (key-gated) — annotates the proof with
@@ -55,10 +62,57 @@ export async function POST(
     }
   }
 
+  // To Drive, not into the database. A screenshot stored as base64 on the
+  // order row is the heaviest thing the app writes, and Wheng can't open it
+  // from the ledger — she needs a link she can click.
+  let driveUrl: string | undefined;
+  try {
+    const saved = await savePaymentProofToDrive(body.dataUrl, proof.name);
+    if (saved) {
+      driveUrl = saved.url;
+      proof.url = saved.url;
+    }
+  } catch (err) {
+    // Keep the inline copy rather than losing the upload — the ledger row
+    // just won't have a working link, which the warning below reports.
+    console.error("Drive upload failed, keeping inline copy:", err);
+  }
+
   proofs.push(proof);
   order.payment.proofs = proofs;
+
+  // One ledger row per transfer. Test orders stay out of the real ledger
+  // for the same reason they stay out of the Order History sheet.
+  let ledgerWarning: string | undefined;
+  if (!order.isTest) {
+    try {
+      const amount = proof.amountPaid ?? order.total;
+      const logged = await appendPaymentLedger({
+        orderNo: order.shopifyDraftName ?? order.id,
+        orderDeskId: order.id,
+        customerName: order.company,
+        orderTotal: order.total,
+        amountPaid: amount,
+        paymentDate: proof.paymentDate || proof.analysis?.date || "",
+        bank: proof.analysis?.senderName || "",
+        reference: proof.analysis?.ref || "",
+        screenshotUrl: driveUrl || "",
+        notes: proof.notes || "",
+      });
+      if (logged) proof.ledgerLogged = true;
+      else ledgerWarning = "Saved, but the Payment Ledger row didn't write — add it by hand.";
+    } catch (err) {
+      console.error("Payment ledger append failed:", err);
+      ledgerWarning = "Saved, but the Payment Ledger row didn't write — add it by hand.";
+    }
+  }
+
   await saveOrder(order);
-  return NextResponse.json({ order });
+  return NextResponse.json({
+    order,
+    ledgerWarning,
+    driveSaved: Boolean(driveUrl),
+  });
 }
 
 /** Remove one proof by index (mis-uploaded screenshot). */

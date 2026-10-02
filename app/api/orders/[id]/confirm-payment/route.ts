@@ -40,6 +40,20 @@ export async function POST(
     const body = (await request.json().catch(() => ({}))) as {
       manualOverride?: boolean;
     };
+    // With recon moved to Wheng's weekly pass, the uploaded screenshot IS
+    // the evidence this order was paid — so it's the one thing that can't be
+    // skipped. Overriding the BPI match is still allowed; overriding the
+    // absence of any proof at all is not.
+    if ((order.payment.proofs ?? []).length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Upload the payment screenshot first — it's what Wheng reconciles against.",
+        },
+        { status: 409 }
+      );
+    }
+
     const selected = attachedMatches(order);
     if (selected.length === 0 && !body.manualOverride) {
       return NextResponse.json(

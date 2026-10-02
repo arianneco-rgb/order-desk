@@ -76,9 +76,21 @@ export interface ProofAnalysis {
 }
 
 export interface ProofOfPayment {
+  /**
+   * The screenshot. New uploads are a Drive link; older ones are an inline
+   * base64 data URL (they predate Drive storage and still render fine).
+   */
   url: string;
   name: string;
   uploadedAt: string;
+  /** What this transfer was for — the ledger's Amount Paid. */
+  amountPaid?: number;
+  /** Date on the slip, which is often not the date it was uploaded. */
+  paymentDate?: string;
+  /** e.g. "2% withholding tax", "split payment 1 of 2". */
+  notes?: string;
+  /** Set once the row reaches the Payment Ledger sheet. */
+  ledgerLogged?: boolean;
   /** Present only when ANTHROPIC_API_KEY is set — see lib/proof-reader.ts. */
   analysis?: ProofAnalysis;
 }
