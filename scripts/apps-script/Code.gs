@@ -104,11 +104,13 @@ const BPI_MATCHED_AT_COLUMN = 13;
  * withholding tax ordinary rather than exceptional: three transfers for one
  * order are three rows, and the Balance column shows what's still open.
  *
- * The folder is created on first use if PAYMENT_PROOFS_FOLDER_ID is blank,
- * and its id is written to Script Properties so it survives a code paste.
+ * Screenshots go to the team's existing Drive folder (below). The folder is
+ * only created from scratch if that id is ever blanked out.
  */
 const PAYMENT_LEDGER_SHEET_ID = '1ZMk4C32nOx6vWCqHzLBbdSEctJQLOKCyNU7zIVoanwc';
 const PAYMENT_LEDGER_TAB = 'Payment Ledger';
+/** The team's own "proof of payments" folder, shared 2026-10-08. */
+const PAYMENT_PROOFS_FOLDER_ID = '1-2bE6yIESrbCVNPoAtEVbXh1jw25XKZX';
 const PAYMENT_PROOFS_FOLDER_NAME = 'RMC Payment Proofs — Order Desk';
 const PAYMENT_LEDGER_HEADER = [
   'Logged At', 'Payment Date', 'Order #', 'Order Desk ID', 'Customer Name',
@@ -134,16 +136,18 @@ function authorizeDrive() {
     'Payment proofs folder: "' + folder.getName() + '"\n' +
     'Folder ID: ' + folder.getId() + '\n' +
     'Open it: ' + folder.getUrl() + '\n\n' +
-    'Share this folder with whoever reconciles payments.';
+    'This should be the team\'s "proof of payments" folder.';
   Logger.log(msg);
   return msg;
 }
 
 function paymentProofsFolder_() {
   const props = PropertiesService.getScriptProperties();
-  const stored = props.getProperty('PAYMENT_PROOFS_FOLDER_ID');
-  if (stored) {
-    try { return DriveApp.getFolderById(stored); } catch (e) { /* recreate below */ }
+  // The real folder id wins over anything cached: it's the one the team
+  // actually opens, so a stray auto-created folder must never shadow it.
+  const id = PAYMENT_PROOFS_FOLDER_ID || props.getProperty('PAYMENT_PROOFS_FOLDER_ID');
+  if (id) {
+    try { return DriveApp.getFolderById(id); } catch (e) { /* fall through */ }
   }
   const existing = DriveApp.getFoldersByName(PAYMENT_PROOFS_FOLDER_NAME);
   const folder = existing.hasNext()
