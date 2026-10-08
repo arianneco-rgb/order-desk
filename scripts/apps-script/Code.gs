@@ -116,6 +116,29 @@ const PAYMENT_LEDGER_HEADER = [
   'Screenshot', 'Uploaded By', 'Notes', 'Recon Status', 'Recon Date', 'Recon By',
 ];
 
+/**
+ * RUN THIS ONCE from the editor after pasting a new version.
+ *
+ * Google only asks for a permission when code that needs it actually runs,
+ * and it asks per SCOPE — so running a Sheets function grants nothing for
+ * Drive. This touches Drive deliberately, which is what makes the consent
+ * prompt appear. Without it, payment-proof uploads fail with
+ * "Wala kang pahintulot / You do not have permission to call DriveApp".
+ *
+ * Safe to re-run: it reuses the folder if one already exists.
+ */
+function authorizeDrive() {
+  const folder = paymentProofsFolder_();
+  const msg =
+    'Drive authorised.\n' +
+    'Payment proofs folder: "' + folder.getName() + '"\n' +
+    'Folder ID: ' + folder.getId() + '\n' +
+    'Open it: ' + folder.getUrl() + '\n\n' +
+    'Share this folder with whoever reconciles payments.';
+  Logger.log(msg);
+  return msg;
+}
+
 function paymentProofsFolder_() {
   const props = PropertiesService.getScriptProperties();
   const stored = props.getProperty('PAYMENT_PROOFS_FOLDER_ID');
