@@ -136,12 +136,20 @@ const PAYMENT_LEDGER_HEADER = [
  */
 function authorizeDrive() {
   const folder = paymentProofsFolder_();
+  // Deliberately WRITES. Reading a folder only needs drive.readonly, which
+  // the project already had — so a read-only probe reported success while
+  // real uploads kept failing on createFile. Writing here means this
+  // function can't pass unless the upload itself would.
+  const marker = folder.createFile(
+    '_authorizeDrive-ok-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.txt',
+    'Written by authorizeDrive() to prove the Drive write scope is granted. Safe to delete.',
+    'text/plain'
+  );
   const msg =
-    'Drive authorised.\n' +
+    'Drive WRITE authorised \u2014 uploads will work.\n' +
     'Payment proofs folder: "' + folder.getName() + '"\n' +
-    'Folder ID: ' + folder.getId() + '\n' +
-    'Open it: ' + folder.getUrl() + '\n\n' +
-    'This should be the team\'s "proof of payments" folder.';
+    'Open it: ' + folder.getUrl() + '\n' +
+    'Test file written: ' + marker.getName() + ' (safe to delete)';
   Logger.log(msg);
   return msg;
 }
