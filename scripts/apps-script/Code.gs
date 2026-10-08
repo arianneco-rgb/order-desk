@@ -128,6 +128,11 @@ const PAYMENT_LEDGER_HEADER = [
  * "Wala kang pahintulot / You do not have permission to call DriveApp".
  *
  * Safe to re-run: it reuses the folder if one already exists.
+ *
+ * If this still fails on createFile, the project's appsscript.json is
+ * pinning a narrower Drive scope than the upload needs — it must list
+ * https://www.googleapis.com/auth/drive, not drive.readonly. See
+ * Code.appsscript.json next to this file.
  */
 function authorizeDrive() {
   const folder = paymentProofsFolder_();
