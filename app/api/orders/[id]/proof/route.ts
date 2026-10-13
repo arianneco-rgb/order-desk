@@ -43,11 +43,35 @@ export async function POST(
       { status: 400 }
     );
   }
+  // "Leave it blank and we'll assume the full total" is only safe for the
+  // FIRST transfer. Once an order has a payment on it, a blank second upload
+  // would log the full total a second time and drive the ledger balance
+  // negative — which is precisely the split payment this screen exists to
+  // handle. Make the amount explicit from the second screenshot onwards.
+  const amountGiven = Number.isFinite(body.amountPaid)
+    ? Number(body.amountPaid)
+    : undefined;
+  if (amountGiven !== undefined && amountGiven <= 0) {
+    return NextResponse.json(
+      { error: "Amount paid has to be more than ₱0." },
+      { status: 400 }
+    );
+  }
+  if (amountGiven === undefined && proofs.length > 0) {
+    return NextResponse.json(
+      {
+        error:
+          "This order already has a payment logged — say how much this transfer covers.",
+      },
+      { status: 400 }
+    );
+  }
+
   const proof: ProofOfPayment = {
     url: body.dataUrl,
     name: body.fileName || `proof-${proofs.length + 1}`,
     uploadedAt: new Date().toISOString(),
-    amountPaid: Number.isFinite(body.amountPaid) ? Number(body.amountPaid) : undefined,
+    amountPaid: amountGiven,
     paymentDate: body.paymentDate?.slice(0, 40),
     notes: body.notes?.trim().slice(0, 300) || undefined,
   };

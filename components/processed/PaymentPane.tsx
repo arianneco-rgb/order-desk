@@ -14,12 +14,33 @@ import { formatTime } from "./format";
 
 const LARGE_PAYMENT_THRESHOLD = 100000;
 
+/** Mirrors MAX_PROOFS in app/api/orders/[id]/proof/route.ts. */
+const MAX_PROOFS = 8;
+
 /** Server order of confirm-payment, with measured typical durations. */
 const CONFIRM_STEPS = [
   { label: "Claiming the payment…", ms: 1800 },
   { label: "Marking the order paid in Shopify…", ms: 2200 },
   { label: "Recording it — almost there…", ms: 1200 },
 ];
+
+/** A chosen screenshot, held until its amount is filled in. */
+interface PendingProof {
+  id: string;
+  name: string;
+  dataUrl: string;
+  amount: string;
+  note: string;
+}
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error(`Couldn't read ${file.name}.`));
+    reader.readAsDataURL(file);
+  });
+}
 
 /** Right pane: proof upload → BPI match → confirm payment → paid replies. */
 export function PaymentPane({
@@ -48,10 +69,12 @@ export function PaymentPane({
   const [suggestion, setSuggestion] = useState<BpiMatch | null>(null);
   const [picking, setPicking] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
-  // Captured BEFORE the file picker opens, because the upload fires as soon
-  // as a file is chosen — there's no later moment to ask.
-  const [amountPaid, setAmountPaid] = useState("");
-  const [proofNotes, setProofNotes] = useState("");
+  // Screenshots wait here until Joey has priced each one. Cafes that max out
+  // a transfer limit send two or three slips for a single order, and each
+  // slip is its own amount — so the amount can't be asked once for the
+  // batch, and it can't be asked before the picker opens either.
+  const [pending, setPending] = useState<PendingProof[]>([]);
+  const [uploadedCount, setUploadedCount] = useState(0);
 
   const orderId = order?.id ?? null;
   // Legacy single-match orders are read as a one-item list.
@@ -60,6 +83,14 @@ export function PaymentPane({
   const hasSelection = selectedMatches.length > 0;
   const isPaid = order?.status === "paid";
   const proofs = order?.payment.proofs ?? [];
+  // What the ledger already holds for this order, and what's staged on top.
+  // Same rule the server uses, so the running total matches the sheet.
+  const loggedPaid = proofs.reduce(
+    (sum, p) => sum + (p.amountPaid ?? order?.total ?? 0),
+    0
+  );
+  const pendingPaid = pending.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const stillShort = (order?.total ?? 0) - loggedPaid - pendingPaid;
 
   // Reset per-order UI state when the selection changes.
   useEffect(() => {
@@ -70,8 +101,11 @@ export function PaymentPane({
     setLightbox(null);
     setCandidates([]);
     setSuggestion(null);
-    setAmountPaid("");
-    setProofNotes("");
+    // Staged-but-unlogged screenshots belong to the order they were picked
+    // for — carrying them to the next selection would log one cafe's
+    // transfer against another's order.
+    setPending([]);
+    setUploadedCount(0);
     if (fileRef.current) fileRef.current.value = "";
   }, [orderId]);
 
@@ -139,48 +173,92 @@ export function PaymentPane({
     if (shouldPoll) void checkInbox();
   }, 8000);
 
-  function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+  async function onFilesChosen(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
     // Clear the input so choosing the same file again still fires onChange.
     e.target.value = "";
-    if (!file || !orderId) return;
-    setUploading(true);
+    if (!files.length || !orderId) return;
     setError(null);
-    const reader = new FileReader();
-    reader.onload = async () => {
+    const room = MAX_PROOFS - proofs.length - pending.length;
+    if (room <= 0) {
+      setError(`That's already ${MAX_PROOFS} screenshots on this order.`);
+      return;
+    }
+    const taking = files.slice(0, room);
+    if (taking.length < files.length) {
+      setError(
+        `Took the first ${taking.length} — ${MAX_PROOFS} screenshots is the limit per order.`
+      );
+    }
+    try {
+      const read = await Promise.all(
+        taking.map(async (file) => ({
+          id: `${file.name}-${file.size}-${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name,
+          dataUrl: await readAsDataUrl(file),
+          amount: "",
+          note: "",
+        }))
+      );
+      setPending((list) => [...list, ...read]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't read those files.");
+    }
+  }
+
+  function updatePending(id: string, patch: Partial<PendingProof>) {
+    setPending((list) => list.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+  }
+
+  /**
+   * Uploads one at a time rather than in parallel. The bridge works out each
+   * row's running balance from the rows already in the sheet, so two
+   * concurrent appends would both read the same "already paid" and write the
+   * same balance — the ledger would show an order still half-open after it
+   * was paid in full.
+   */
+  async function uploadPending() {
+    if (!orderId || !order || pending.length === 0) return;
+    // Mirrors the server rule: a blank amount only means "the whole total"
+    // when this is the one and only payment against the order.
+    const soloFullPayment = pending.length === 1 && proofs.length === 0;
+    if (!soloFullPayment && pending.some((p) => !p.amount.trim())) {
+      setError("Each screenshot is a separate transfer — give every one an amount.");
+      return;
+    }
+    setUploading(true);
+    setUploadedCount(0);
+    setError(null);
+    const total = pending.length;
+    for (const [i, item] of pending.entries()) {
       try {
         const res = await fetch(`/api/orders/${orderId}/proof`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            dataUrl: reader.result,
-            fileName: file.name,
-            amountPaid: amountPaid === "" ? undefined : Number(amountPaid),
-            notes: proofNotes.trim() || undefined,
+            dataUrl: item.dataUrl,
+            fileName: item.name,
+            amountPaid: item.amount.trim() === "" ? undefined : Number(item.amount),
+            notes: item.note.trim() || undefined,
           }),
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(data.error || `Upload failed (HTTP ${res.status}).`);
-        }
+        if (!res.ok) throw new Error(data.error || `Upload failed (HTTP ${res.status}).`);
         onOrderUpdate(data.order);
-        setAmountPaid("");
-        setProofNotes("");
+        setUploadedCount(i + 1);
         if (data.ledgerWarning) setError(data.ledgerWarning);
-        void checkInbox(); // re-check the inbox right after proof upload
+        // Drop each one as it lands, so a retry after a mid-batch failure
+        // can't log the successful ones a second time.
+        setPending((list) => list.filter((p) => p.id !== item.id));
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Couldn't upload the proof."
+          `${err instanceof Error ? err.message : "Upload failed."} ${i} of ${total} logged — the rest are still below, fix and retry.`
         );
-      } finally {
-        setUploading(false);
+        break;
       }
-    };
-    reader.onerror = () => {
-      setUploading(false);
-      setError("Couldn't read that file.");
-    };
-    reader.readAsDataURL(file);
+    }
+    setUploading(false);
+    void checkInbox(); // re-check the inbox right after proof upload
   }
 
   async function removeProof(index: number) {
@@ -277,53 +355,120 @@ export function PaymentPane({
             <p className="text-sm font-semibold text-forest-800">
               Proof from Viber
             </p>
-            <div className="mt-2 flex flex-wrap items-end gap-2">
-              <label className="text-xs text-forest-700">
-                Amount paid
-                <input
-                  type="number"
-                  min={0}
-                  value={amountPaid}
-                  onChange={(e) => setAmountPaid(e.target.value)}
-                  placeholder={String(order.total)}
-                  className="mt-0.5 block w-32 rounded-md border border-forest-300 px-2 py-1 text-sm"
-                />
-              </label>
-              <label className="min-w-[10rem] flex-1 text-xs text-forest-700">
-                Note (optional)
-                <input
-                  value={proofNotes}
-                  onChange={(e) => setProofNotes(e.target.value)}
-                  maxLength={300}
-                  placeholder="e.g. 2% withholding, split 1 of 2"
-                  className="mt-0.5 block w-full rounded-md border border-forest-300 px-2 py-1 text-sm"
-                />
-              </label>
-            </div>
             <p className="mt-1 text-[11px] text-forest-500">
-              Leave the amount blank if the transfer covers the full {formatPeso(order.total)}.
-              Each upload becomes one row in the Payment Ledger for Wheng&apos;s recon.
+              One row per transfer. If a cafe maxed out their limit and sent
+              three, add all three — each becomes its own Payment Ledger row
+              for Wheng&apos;s recon.
             </p>
             <label className="mt-2 flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-forest-300 bg-forest-50/50 px-4 py-5 text-center transition-colors hover:border-forest-400 hover:bg-forest-50">
               <span className="text-sm font-medium text-forest-800">
-                {uploading
-                  ? "Uploading…"
-                  : proofs.length
-                    ? "Add another payment screenshot"
-                    : "Upload / paste payment screenshot"}
+                {proofs.length || pending.length
+                  ? "Add another payment screenshot"
+                  : "Upload / paste payment screenshots"}
               </span>
               <span className="mt-0.5 text-xs text-forest-500">
-                Viber screenshot or bank slip (image)
+                Viber screenshots or bank slips — pick several at once
               </span>
               <input
                 ref={fileRef}
                 type="file"
                 accept="image/*"
-                onChange={onFileChosen}
+                multiple
+                onChange={onFilesChosen}
                 disabled={uploading}
                 className="sr-only"
               />
             </label>
+
+            {/* Staged screenshots: each one is priced before anything is
+                logged, because each is a separate transfer. */}
+            {pending.length > 0 && (
+              <div className="mt-2 space-y-2 rounded-lg border border-forest-300 bg-white p-2">
+                {pending.map((item, i) => (
+                  <div key={item.id} className="flex items-start gap-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={item.dataUrl}
+                      alt={item.name}
+                      className="mt-4 h-12 w-12 shrink-0 rounded-md border border-forest-200 object-cover"
+                    />
+                    <div className="flex min-w-0 flex-1 flex-wrap items-end gap-2">
+                      <label className="text-xs text-forest-700">
+                        Transfer {proofs.length + i + 1}
+                        <input
+                          type="number"
+                          min={0}
+                          value={item.amount}
+                          onChange={(e) =>
+                            updatePending(item.id, { amount: e.target.value })
+                          }
+                          placeholder={
+                            pending.length === 1 && proofs.length === 0
+                              ? String(order.total)
+                              : "amount"
+                          }
+                          disabled={uploading}
+                          className="mt-0.5 block w-28 rounded-md border border-forest-300 px-2 py-1 text-sm"
+                        />
+                      </label>
+                      <label className="min-w-[8rem] flex-1 text-xs text-forest-700">
+                        Note (optional)
+                        <input
+                          value={item.note}
+                          onChange={(e) =>
+                            updatePending(item.id, { note: e.target.value })
+                          }
+                          maxLength={300}
+                          placeholder="e.g. 2% withholding"
+                          disabled={uploading}
+                          className="mt-0.5 block w-full rounded-md border border-forest-300 px-2 py-1 text-sm"
+                        />
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPending((l) => l.filter((p) => p.id !== item.id))
+                      }
+                      disabled={uploading}
+                      aria-label={`Remove ${item.name}`}
+                      className="mt-4 shrink-0 rounded-full border border-forest-200 bg-white px-1.5 py-0.5 text-xs font-bold text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-forest-100 pt-2">
+                  <p className="text-xs text-forest-600">
+                    {formatPeso(loggedPaid + pendingPaid)} of{" "}
+                    {formatPeso(order.total)}
+                    {stillShort > 0.009 && (
+                      <span className="text-amber-700">
+                        {" "}
+                        · {formatPeso(stillShort)} short
+                      </span>
+                    )}
+                    {stillShort < -0.009 && (
+                      <span className="text-amber-700">
+                        {" "}
+                        · {formatPeso(-stillShort)} over
+                      </span>
+                    )}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void uploadPending()}
+                    disabled={uploading}
+                    className="flex items-center gap-2 rounded-md bg-forest-700 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-forest-800 disabled:opacity-50"
+                  >
+                    {uploading && <Spinner />}
+                    {uploading
+                      ? `Logging… ${uploadedCount} done`
+                      : `Log ${pending.length} payment${pending.length > 1 ? "s" : ""}`}
+                  </button>
+                </div>
+              </div>
+            )}
             {proofs.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-2">
                 {proofs.map((proof, i) => (
