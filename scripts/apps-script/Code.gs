@@ -73,7 +73,29 @@ const HISTORY_HEADER = ['Paid at', 'Cafe', 'Items', 'Total (PHP)', 'Order Desk I
 // (share it with that account) or getCustomerProfile/logInvoice will fail
 // with a permission error.
 const INVOICE_SHEET_ID = '19aY634KhVj26raqeEl1ya-JZBSyEalycOJO7PNwNoLg';
-const CUSTOMER_PROFILES_TAB = 'Customer Profiles';
+/**
+ * The customer registry inside the Proforma sheet. Renamed from "Customer
+ * Profiles" to "Invoice Details" at some point, which silently broke every
+ * invoice: the lookup threw "tab not found" and generation refused. Columns
+ * A-G are unchanged (Merchant Code, Customer Name, Contact Number,
+ * Registered Name, TIN, Registered Address, VAT?), which is what the reader
+ * below expects. A stale "Customer Profiles TEST" tab also exists with six
+ * rows of dummy cafes and a different column order — never point at it.
+ */
+const CUSTOMER_PROFILES_TAB = 'Invoice Details';
+
+/**
+ * First data row (0-based) in the profiles tab. The old tab had three
+ * header rows and this was hardcoded to 3; Invoice Details has one, so a
+ * fixed 3 silently skipped the first two customers. Find the header by its
+ * first column instead.
+ */
+function profilesFirstDataRow_(values) {
+  for (let i = 0; i < Math.min(values.length, 10); i++) {
+    if (String(values[i][0] || '').trim().toLowerCase() === 'merchant code') return i + 1;
+  }
+  return 1;
+}
 const INVOICE_LEDGER_TAB = 'Invoice Ledger';
 
 // BPI payment matching reads from a SEPARATE, dedicated spreadsheet that a
@@ -635,7 +657,7 @@ function findCustomerProfile(contactNumber, nameOrCompany) {
   let byExact = null;
   let byFuzzy = null;
 
-  for (let i = 3; i < values.length; i++) {
+  for (let i = profilesFirstDataRow_(values); i < values.length; i++) {
     const row = values[i];
     const merchantCode = row[0];
     if (!merchantCode) continue;
@@ -731,7 +753,7 @@ function getOrCreateCustomerProfile(input) {
     const code = String(input.merchantCode || '').trim().toUpperCase() || deriveMerchantCode(companyName);
     if (!code) return { error: 'Could not derive a merchant code from that company name.' };
 
-    for (let i = 3; i < values.length; i++) {
+    for (let i = profilesFirstDataRow_(values); i < values.length; i++) {
       const row = values[i];
       const rowCode = String(row[0] || '').trim().toUpperCase();
       if (rowCode === code && String(row[3] || '').trim().toLowerCase() !== companyName.toLowerCase()) {
