@@ -112,11 +112,23 @@ const PAYMENT_LEDGER_TAB = 'Payment Ledger';
 /** The team's own "proof of payments" folder, shared 2026-10-08. */
 const PAYMENT_PROOFS_FOLDER_ID = '1-2bE6yIESrbCVNPoAtEVbXh1jw25XKZX';
 const PAYMENT_PROOFS_FOLDER_NAME = 'RMC Payment Proofs — Order Desk';
+/**
+ * Deliberately short. Payment Date, Bank / Method, Reference No. and
+ * Uploaded By were dropped on 2026-10-14: nothing filled them in, so they
+ * were four permanently empty columns between Wheng and the numbers she
+ * actually reads. The screenshot link carries that detail — one click.
+ *
+ * Order Desk ID is last because nobody reads it, but it can't go: it's the
+ * key appendPaymentLedger uses to find an order's earlier transfers and
+ * work out the running balance.
+ */
 const PAYMENT_LEDGER_HEADER = [
-  'Logged At', 'Payment Date', 'Order #', 'Order Desk ID', 'Customer Name',
-  'Order Total', 'Amount Paid', 'Balance', 'Bank / Method', 'Reference No.',
-  'Screenshot', 'Uploaded By', 'Notes', 'Recon Status', 'Recon Date', 'Recon By',
+  'Logged At', 'Order #', 'Customer Name', 'Order Total',
+  'Amount Paid', 'Balance', 'Screenshot', 'Notes', 'Order Desk ID',
 ];
+/** 1-based columns the balance lookup reads. Keep in step with the header. */
+const LEDGER_COL_AMOUNT_PAID = 5;
+const LEDGER_COL_ORDER_DESK_ID = 9;
 
 /**
  * RUN THIS ONCE from the editor after pasting a new version.
@@ -219,9 +231,14 @@ function appendPaymentLedger(row) {
     const lastRow = sheet.getLastRow();
     let alreadyPaid = 0;
     if (lastRow > 1) {
-      const existing = sheet.getRange(2, 4, lastRow - 1, 4).getValues(); // D..G
+      const width = LEDGER_COL_ORDER_DESK_ID - LEDGER_COL_AMOUNT_PAID + 1;
+      const existing = sheet
+        .getRange(2, LEDGER_COL_AMOUNT_PAID, lastRow - 1, width)
+        .getValues();
       existing.forEach(function (r) {
-        if (String(r[0]) === String(row.orderDeskId)) alreadyPaid += Number(r[3]) || 0;
+        if (String(r[width - 1]) === String(row.orderDeskId)) {
+          alreadyPaid += Number(r[0]) || 0;
+        }
       });
     }
     const amount = Number(row.amountPaid) || 0;
@@ -230,19 +247,14 @@ function appendPaymentLedger(row) {
 
     sheet.appendRow([
       new Date(),
-      row.paymentDate || '',
       row.orderNo || '',
-      row.orderDeskId || '',
       row.customerName || '',
       total,
       amount,
       balance,
-      row.bank || '',
-      row.reference || '',
       row.screenshotUrl || '',
-      row.uploadedBy || '',
       row.notes || '',
-      '', '', '',  // Recon columns — Wheng's, never written by the app
+      row.orderDeskId || '',
     ]);
     return { ok: true, balance: balance, alreadyPaid: alreadyPaid + amount };
   } finally {

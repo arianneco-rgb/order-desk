@@ -14,17 +14,18 @@
 import { sheetsMode } from "./config";
 import { callAppsScript } from "./apps-script";
 
+/**
+ * Mirrors PAYMENT_LEDGER_HEADER in scripts/apps-script/Code.gs. Payment
+ * date, bank, reference and uploader were dropped on 2026-10-14 — nothing
+ * populated them, and the screenshot link covers that detail.
+ */
 export interface LedgerEntry {
   orderNo: string;
   orderDeskId: string;
   customerName: string;
   orderTotal: number;
   amountPaid: number;
-  paymentDate?: string;
-  bank?: string;
-  reference?: string;
   screenshotUrl?: string;
-  uploadedBy?: string;
   notes?: string;
 }
 

@@ -116,11 +116,8 @@ export async function POST(
         orderDeskId: order.id,
         customerName: order.company,
         orderTotal: order.total,
-        amountPaid: amount,
-        paymentDate: proof.paymentDate || proof.analysis?.date || "",
-        bank: proof.analysis?.senderName || "",
-        reference: proof.analysis?.ref || "",
         screenshotUrl: driveUrl || "",
+        amountPaid: amount,
         notes: proof.notes || "",
       });
       if (logged) proof.ledgerLogged = true;
