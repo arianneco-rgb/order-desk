@@ -122,13 +122,52 @@ const PAYMENT_PROOFS_FOLDER_NAME = 'RMC Payment Proofs — Order Desk';
  * key appendPaymentLedger uses to find an order's earlier transfers and
  * work out the running balance.
  */
-const PAYMENT_LEDGER_HEADER = [
-  'Logged At', 'Order #', 'Customer Name', 'Order Total',
-  'Amount Paid', 'Balance', 'Screenshot', 'Notes', 'Order Desk ID',
+/**
+ * Field -> the header text it is written under. Columns are located BY NAME
+ * at write time, not by position, so the sheet's own header row is the
+ * source of truth: the team can reorder columns, keep ones the app no
+ * longer fills (an older/wider header just leaves those cells blank), or
+ * drop ones they don't want, and nothing has to be cleared for the app to
+ * keep writing to the right places.
+ */
+const PAYMENT_LEDGER_FIELDS = [
+  ['loggedAt', 'Logged At'],
+  ['orderNo', 'Order #'],
+  ['customerName', 'Customer Name'],
+  ['orderTotal', 'Order Total'],
+  ['amountPaid', 'Amount Paid'],
+  ['balance', 'Balance'],
+  ['screenshotUrl', 'Screenshot'],
+  ['notes', 'Notes'],
+  ['orderDeskId', 'Order Desk ID'],
 ];
-/** 1-based columns the balance lookup reads. Keep in step with the header. */
-const LEDGER_COL_AMOUNT_PAID = 5;
-const LEDGER_COL_ORDER_DESK_ID = 9;
+
+/** Without these two there is no way to compute a running balance. */
+const PAYMENT_LEDGER_REQUIRED = ['amountPaid', 'orderDeskId'];
+
+/** Canonical header, written only when the tab is empty. */
+const PAYMENT_LEDGER_HEADER = PAYMENT_LEDGER_FIELDS.map(function (f) { return f[1]; });
+
+/** Maps each field to a 0-based column in whatever header the sheet has. */
+function ledgerColumns_(sheet) {
+  const width = Math.max(sheet.getLastColumn(), PAYMENT_LEDGER_HEADER.length);
+  const header = sheet.getRange(1, 1, 1, width).getValues()[0];
+  const seen = {};
+  header.forEach(function (name, i) {
+    const key = String(name || '').trim().toLowerCase();
+    if (key && seen[key] === undefined) seen[key] = i;
+  });
+  const cols = {};
+  const missing = [];
+  PAYMENT_LEDGER_FIELDS.forEach(function (f) {
+    const at = seen[f[1].toLowerCase()];
+    cols[f[0]] = at === undefined ? -1 : at;
+    if (at === undefined && PAYMENT_LEDGER_REQUIRED.indexOf(f[0]) !== -1) {
+      missing.push(f[1]);
+    }
+  });
+  return { cols: cols, width: width, missing: missing };
+}
 
 /**
  * RUN THIS ONCE from the editor after pasting a new version.
@@ -228,16 +267,24 @@ function appendPaymentLedger(row) {
   lock.waitLock(30000);
   try {
     const sheet = getPaymentLedgerSheet_();
+    const layout = ledgerColumns_(sheet);
+    if (layout.missing.length) {
+      return {
+        error:
+          'The Payment Ledger is missing these columns: ' +
+          layout.missing.join(', ') +
+          '. Add them to row 1 (spelling must match) and try again.',
+      };
+    }
+    const cols = layout.cols;
+
     const lastRow = sheet.getLastRow();
     let alreadyPaid = 0;
     if (lastRow > 1) {
-      const width = LEDGER_COL_ORDER_DESK_ID - LEDGER_COL_AMOUNT_PAID + 1;
-      const existing = sheet
-        .getRange(2, LEDGER_COL_AMOUNT_PAID, lastRow - 1, width)
-        .getValues();
+      const existing = sheet.getRange(2, 1, lastRow - 1, layout.width).getValues();
       existing.forEach(function (r) {
-        if (String(r[width - 1]) === String(row.orderDeskId)) {
-          alreadyPaid += Number(r[0]) || 0;
+        if (String(r[cols.orderDeskId]) === String(row.orderDeskId)) {
+          alreadyPaid += Number(r[cols.amountPaid]) || 0;
         }
       });
     }
@@ -245,17 +292,25 @@ function appendPaymentLedger(row) {
     const total = Number(row.orderTotal) || 0;
     const balance = total - (alreadyPaid + amount);
 
-    sheet.appendRow([
-      new Date(),
-      row.orderNo || '',
-      row.customerName || '',
-      total,
-      amount,
-      balance,
-      row.screenshotUrl || '',
-      row.notes || '',
-      row.orderDeskId || '',
-    ]);
+    const values = {
+      loggedAt: new Date(),
+      orderNo: row.orderNo || '',
+      customerName: row.customerName || '',
+      orderTotal: total,
+      amountPaid: amount,
+      balance: balance,
+      screenshotUrl: row.screenshotUrl || '',
+      notes: row.notes || '',
+      orderDeskId: row.orderDeskId || '',
+    };
+    // Sized to the sheet's own header, so columns the app no longer fills
+    // (an older, wider header) are simply left blank rather than shifting
+    // everything to the left.
+    const out = new Array(layout.width).fill('');
+    Object.keys(values).forEach(function (key) {
+      if (cols[key] >= 0) out[cols[key]] = values[key];
+    });
+    sheet.appendRow(out);
     return { ok: true, balance: balance, alreadyPaid: alreadyPaid + amount };
   } finally {
     lock.releaseLock();
