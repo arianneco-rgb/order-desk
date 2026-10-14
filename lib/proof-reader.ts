@@ -17,7 +17,7 @@ export function proofReaderEnabled(): boolean {
 
 const ANTHROPIC_VERSION = "2023-06-01";
 /** Vision extraction is a small, structured task — Haiku is plenty. */
-const MODEL = process.env.PROOF_READER_MODEL || "claude-haiku-4-5-20251001";
+const MODEL = process.env.PROOF_READER_MODEL || "claude-haiku-5-5";
 
 const PROMPT = `This is a screenshot a cafe sent as proof of a bank transfer (usually BPI, GCash, or InstaPay in the Philippines). Extract what is actually legible in the image and reply with ONLY a JSON object, no other text:
 

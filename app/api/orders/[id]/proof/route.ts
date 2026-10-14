@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrder, saveOrder } from "@/lib/store";
-import { analyzeProof, proofReaderEnabled } from "@/lib/proof-reader";
+import type { ProofAnalysis } from "@/lib/types";
 import { appendPaymentLedger, savePaymentProofToDrive } from "@/lib/payment-ledger";
 import type { ProofOfPayment } from "@/lib/types";
 
@@ -23,8 +23,9 @@ export async function POST(
     dataUrl?: string;
     fileName?: string;
     amountPaid?: number;
-    paymentDate?: string;
     notes?: string;
+    /** What /api/proof-read already read off this screenshot, if anything. */
+    analysis?: ProofAnalysis;
   };
   if (!body.dataUrl?.startsWith("data:")) {
     return NextResponse.json({ error: "dataUrl required" }, { status: 400 });
@@ -72,19 +73,13 @@ export async function POST(
     name: body.fileName || `proof-${proofs.length + 1}`,
     uploadedAt: new Date().toISOString(),
     amountPaid: amountGiven,
-    paymentDate: body.paymentDate?.slice(0, 40),
     notes: body.notes?.trim().slice(0, 300) || undefined,
+    // Carried over from the staging step rather than re-read here: the
+    // screenshot was already sent to /api/proof-read to pre-fill the
+    // amount, and reading it twice would double the cost to say the
+    // same thing.
+    analysis: body.analysis,
   };
-
-  // Best-effort screenshot reading (key-gated) — annotates the proof with
-  // what Claude could read off it. A reader failure never blocks the upload.
-  if (proofReaderEnabled()) {
-    try {
-      proof.analysis = (await analyzeProof(body.dataUrl)) ?? undefined;
-    } catch (err) {
-      console.error("Proof analysis failed:", err);
-    }
-  }
 
   // To Drive, not into the database. A screenshot stored as base64 on the
   // order row is the heaviest thing the app writes, and Wheng can't open it
