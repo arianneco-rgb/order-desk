@@ -160,3 +160,21 @@ export function vatMismatch(
 ): boolean {
   return profile !== null && profile.vat !== orderChargedVat;
 }
+
+/**
+ * A VAT invoice with no TIN on it is the one error a customer's accountant
+ * will bounce, and the sheet is full of placeholder TINs — "-", "n/a",
+ * blank — on rows that are nonetheless marked VAT-registered (CANDID
+ * COFFEE ENTERPRISE OPC, for one). Anything without digits in it is not a
+ * TIN.
+ *
+ * Only a problem when THIS order actually charges VAT: a non-VAT invoice
+ * for a customer with no TIN on file is perfectly normal.
+ */
+export function missingTin(
+  orderChargedVat: boolean,
+  profile: CustomerProfile | null
+): boolean {
+  if (!orderChargedVat || !profile) return false;
+  return !/\d/.test(String(profile.tin ?? ""));
+}

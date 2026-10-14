@@ -38,6 +38,7 @@ interface PreviewData {
   preparers: string[];
   profileError?: string;
   mismatch: boolean;
+  missingTin?: boolean;
   invoiceNumber?: string;
   alreadyGenerated?: boolean;
 }
@@ -105,7 +106,7 @@ export default function InvoicePage({ params }: { params: { orderId: string } })
     );
   }
 
-  const { order, lines, profile, profileError, preparers, mismatch } = data;
+  const { order, lines, profile, profileError, preparers, mismatch, missingTin } = data;
   const generated = Boolean(order.invoiceNumber);
   const totals = order.totals;
   const subtotal = totals?.subtotal ?? lines.reduce((s, l) => s + l.amount, 0);
@@ -198,6 +199,18 @@ export default function InvoicePage({ params }: { params: { orderId: string } })
       {profileError && (
         <p className="mb-4 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800 print:hidden">
           ⚠️ {profileError}
+        </p>
+      )}
+
+      {missingTin && (
+        <p className="mb-4 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800 print:hidden">
+          ⚠️ This invoice charges VAT but{" "}
+          <strong>{profile?.companyName || order.company}</strong> has no TIN on
+          file (Invoice Details shows{" "}
+          {profile?.tin ? `“${profile.tin}”` : "a blank"}). A VAT invoice without
+          a TIN is the thing a customer&apos;s accountant sends back — add the
+          real TIN to the Invoice Details tab before sending this, or switch
+          this order to non-VAT.
         </p>
       )}
 

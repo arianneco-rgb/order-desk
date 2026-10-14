@@ -6,6 +6,7 @@ import {
   getCustomerProfile,
   getOrCreateCustomerProfile,
   logInvoiceToLedger,
+  missingTin,
   vatMismatch,
   type CustomerProfile,
 } from "@/lib/invoice";
@@ -56,6 +57,7 @@ async function buildPreview(orderId: string) {
     profileError,
     preparers: PREPARERS,
     mismatch: vatMismatch(order.options.chargeVat, profile),
+    missingTin: missingTin(order.options.chargeVat, profile),
   };
 }
 
@@ -197,6 +199,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       lines: computeInvoiceLines(priceItems(order.items, catalog), catalog),
       profile,
       mismatch: vatMismatch(order.options.chargeVat, profile),
+      missingTin: missingTin(order.options.chargeVat, profile),
     });
   } catch (err) {
     return NextResponse.json(
