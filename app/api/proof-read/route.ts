@@ -6,6 +6,13 @@ export const dynamic = "force-dynamic";
 /**
  * Reads a payment screenshot WITHOUT saving anything.
  *
+ * CURRENTLY UNUSED. Reading moved into Joey's browser (lib/ocr.ts) so it
+ * costs nothing and needs no API key. This route is the paid upgrade,
+ * kept because Claude is markedly better on the messy screenshots
+ * Tesseract fluffs: set ANTHROPIC_API_KEY and point readProofs() back
+ * here and it works as before.
+ *
+ *
  * Deliberately separate from the upload route: the amount is the one field
  * Joey has to type per transfer, so the reading has to happen while the
  * screenshot is still staged and the number can be pre-filled for her to

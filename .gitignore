@@ -14,3 +14,6 @@ data/runtime/
 # Filled-in Apps Script copy — carries APPS_SCRIPT_SECRET, never commit.
 CODE-GS-READY-TO-PASTE.gs
 CODE-GS-READY-TO-PASTE.txt
+
+# Tesseract drops its training data in the cwd when run under Node.
+*.traineddata

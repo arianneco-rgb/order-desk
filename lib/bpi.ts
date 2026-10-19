@@ -134,7 +134,7 @@ function toMatch(t: BpiTransaction, matchedBy?: "reference" | "amount"): BpiMatc
 }
 
 /**
- * Reference numbers Claude vision read off this order's proof screenshots
+ * Reference numbers OCR read off this order's proof screenshots
  * (see lib/proof-reader.ts). InstaPay's reference number is the network's
  * own end-to-end transaction ID — it's shown identically on the sender's
  * banking/e-wallet app and in BPI's confirmation email, so an exact match

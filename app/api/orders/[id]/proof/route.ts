@@ -24,7 +24,7 @@ export async function POST(
     fileName?: string;
     amountPaid?: number;
     notes?: string;
-    /** What /api/proof-read already read off this screenshot, if anything. */
+    /** What the browser's OCR read off this screenshot, if anything. */
     analysis?: ProofAnalysis;
   };
   if (!body.dataUrl?.startsWith("data:")) {
@@ -74,10 +74,9 @@ export async function POST(
     uploadedAt: new Date().toISOString(),
     amountPaid: amountGiven,
     notes: body.notes?.trim().slice(0, 300) || undefined,
-    // Carried over from the staging step rather than re-read here: the
-    // screenshot was already sent to /api/proof-read to pre-fill the
-    // amount, and reading it twice would double the cost to say the
-    // same thing.
+    // Carried over from the staging step rather than re-read here. The
+    // reading happens in Joey's browser (lib/ocr.ts) to pre-fill the
+    // amount; the server has no OCR engine and no reason to run one.
     analysis: body.analysis,
   };
 

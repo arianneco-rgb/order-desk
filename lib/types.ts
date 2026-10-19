@@ -64,7 +64,7 @@ export interface BpiMatch {
   matchedBy?: "reference" | "amount";
 }
 
-/** What Claude vision read off a proof screenshot (best-effort, key-gated). */
+/** What OCR read off a proof screenshot. Best-effort, never authoritative. */
 export interface ProofAnalysis {
   /** Transfer amount in PHP, if legible. */
   amount?: number;
@@ -91,7 +91,7 @@ export interface ProofOfPayment {
   notes?: string;
   /** Set once the row reaches the Payment Ledger sheet. */
   ledgerLogged?: boolean;
-  /** Present only when ANTHROPIC_API_KEY is set — see lib/proof-reader.ts. */
+  /** What OCR read off the slip at staging — see lib/ocr.ts. Advisory. */
   analysis?: ProofAnalysis;
 }
 

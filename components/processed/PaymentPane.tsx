@@ -4,6 +4,7 @@ import { useVisibleInterval } from "@/lib/use-visible-interval";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BpiMatch, Order, ProofAnalysis, ProofOfPayment } from "@/lib/types";
 import { formatPeso } from "@/lib/conversions";
+import { warmUpOcr } from "@/lib/ocr";
 import { CopyButton } from "@/components/CopyButton";
 import { TestBadge } from "@/components/TestBadge";
 import { Modal } from "@/components/Modal";
@@ -31,7 +32,7 @@ interface PendingProof {
   dataUrl: string;
   amount: string;
   note: string;
-  /** True while Claude is reading this slip. */
+  /** True while the screenshot is being read. */
   reading?: boolean;
   /** What it read — shown so Joey can check the pre-filled amount. */
   analysis?: ProofAnalysis;
@@ -212,41 +213,41 @@ export function PaymentPane({
   }
 
   /**
-   * Asks Claude what each slip says and pre-fills the amount. Best-effort
-   * throughout: a dead key, an unreadable screenshot or a network blip just
-   * leaves the field empty for Joey to type, which is what she did before.
-   * It never overwrites an amount she has already entered herself.
+   * Reads each slip in this browser and pre-fills the amount.
+   *
+   * Best-effort throughout: an unreadable screenshot, a blocked CDN or a
+   * slow connection all just leave the field empty for Joey to type, which
+   * is what she did before. It never overwrites an amount she has already
+   * entered herself — if she's typed while the reader was still working,
+   * her number stands.
    */
   async function readProofs(items: PendingProof[]) {
     items.forEach((it) => updatePending(it.id, { reading: true }));
+    // The engine is a lazy chunk; if it can't even be fetched, drop the
+    // "reading…" note rather than leaving it spinning forever.
+    let readSlip: typeof import("@/lib/ocr").readSlip;
+    try {
+      ({ readSlip } = await import("@/lib/ocr"));
+    } catch {
+      items.forEach((it) => updatePending(it.id, { reading: false }));
+      return;
+    }
     await Promise.all(
       items.map(async (it) => {
-        try {
-          const res = await fetch("/api/proof-read", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ dataUrl: it.dataUrl }),
-          });
-          const data = (await res.json().catch(() => ({}))) as {
-            analysis?: ProofAnalysis | null;
-          };
-          const analysis = data.analysis ?? undefined;
-          setPending((list) =>
-            list.map((p) =>
-              p.id === it.id
-                ? {
-                    ...p,
-                    reading: false,
-                    analysis,
-                    amount:
-                      p.amount || !analysis?.amount ? p.amount : String(analysis.amount),
-                  }
-                : p
-            )
-          );
-        } catch {
-          updatePending(it.id, { reading: false });
-        }
+        const analysis = (await readSlip(it.dataUrl)) ?? undefined;
+        setPending((list) =>
+          list.map((p) =>
+            p.id === it.id
+              ? {
+                  ...p,
+                  reading: false,
+                  analysis,
+                  amount:
+                    p.amount || !analysis?.amount ? p.amount : String(analysis.amount),
+                }
+              : p
+          )
+        );
       })
     );
   }
@@ -420,6 +421,10 @@ export function PaymentPane({
                 type="file"
                 accept="image/*"
                 multiple
+                // Start pulling the OCR engine while she's still browsing
+                // for the file — that dialog is most of the first-load
+                // download, and after it the engine is cached locally.
+                onClick={() => warmUpOcr()}
                 onChange={onFilesChosen}
                 disabled={uploading}
                 className="sr-only"
@@ -484,7 +489,7 @@ export function PaymentPane({
                     </button>
                   </div>
                 ))}
-                {/* What Claude read off each slip. Advisory only — the
+                {/* What the reader got off each slip. Advisory only — the
                     amount is pre-filled but Joey's edit always wins. */}
                 {pending.some((p) => p.reading || p.analysis) && (
                   <div className="space-y-0.5 border-t border-forest-100 pt-1.5">
@@ -572,7 +577,7 @@ export function PaymentPane({
                 ))}
               </div>
             )}
-            {/* What Claude read off each screenshot (only when the reader ran). */}
+            {/* What the reader got off each screenshot, when it managed to run. */}
             {proofs.some((p) => p.analysis) && (
               <div className="mt-2 space-y-1.5">
                 {proofs.map((proof, i) => {
