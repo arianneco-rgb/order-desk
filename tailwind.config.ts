@@ -25,17 +25,20 @@ const config: Config = {
         },
         cream: "#faf7f0",
         matcha: "#7fa87a",
+
+        // Semantic status pairs, lifted from the Ritual Order Board so a
+        // warning means the same colour on the board and in here. Each
+        // has a `bg` tuned to sit on the sage ground without glaring.
+        ok: { DEFAULT: "#3f7a5f", bg: "#e3efe8" },
+        warn: { DEFAULT: "#96690f", bg: "#f6eed9" },
+        crit: { DEFAULT: "#9d3a2a", bg: "#f8e5e0" },
+        rush: { DEFAULT: "#b02a1c", ink: "#ffffff" },
+        mute: { DEFAULT: "#5f6f66", bg: "#e8ede7" },
       },
       fontFamily: {
-        sans: [
-          "-apple-system",
-          "BlinkMacSystemFont",
-          "Segoe UI",
-          "Roboto",
-          "Helvetica Neue",
-          "Arial",
-          "sans-serif",
-        ],
+        sans: ["var(--font-sans)", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
+        display: ["var(--font-display)", "Georgia", "ui-serif", "serif"],
+        mono: ["var(--font-mono)", "ui-monospace", "Menlo", "monospace"],
       },
     },
   },

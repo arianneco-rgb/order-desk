@@ -364,7 +364,7 @@ export default function ReportsPage() {
                           <td className="py-2 pr-3">{p.title}</td>
                           <td className="py-2 pr-3 text-right whitespace-nowrap">{p.kg > 0 ? formatKg(p.kg) : "—"}</td>
                           <td className="py-2 pr-3 text-right">{p.samples || "—"}</td>
-                          <td className="py-2 pr-3 text-right font-semibold whitespace-nowrap">{formatPeso(p.revenue)}</td>
+                          <td className="num py-2 pr-3 text-right font-semibold whitespace-nowrap">{formatPeso(p.revenue)}</td>
                           <td className="py-2 pl-3 text-right text-forest-600">
                             {productRevenue > 0 ? `${((p.revenue / productRevenue) * 100).toFixed(1)}%` : "—"}
                           </td>
@@ -460,7 +460,7 @@ export default function ReportsPage() {
                           </td>
                           <td className="py-2 pr-3 text-right">{c.orders}</td>
                           <td className="py-2 pr-3 text-right whitespace-nowrap">{c.kg > 0 ? formatKg(c.kg) : "—"}</td>
-                          <td className="py-2 pl-3 text-right font-semibold whitespace-nowrap">{formatPeso(c.revenue)}</td>
+                          <td className="num py-2 pl-3 text-right font-semibold whitespace-nowrap">{formatPeso(c.revenue)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -539,7 +539,7 @@ export default function ReportsPage() {
                           <td className="py-2 pr-3 whitespace-nowrap text-forest-600">{row.ref}</td>
                           <td className="py-2 pr-3 whitespace-nowrap">{row.cafe}</td>
                           <td className="py-2 pr-3 text-forest-600">{row.items || "—"}</td>
-                          <td className="py-2 pl-3 text-right font-semibold whitespace-nowrap">{formatPeso(row.total)}</td>
+                          <td className="num py-2 pl-3 text-right font-semibold whitespace-nowrap">{formatPeso(row.total)}</td>
                         </tr>
                       ))}
                     </tbody>

@@ -41,7 +41,7 @@ function TotalsBreakdown({ order }: { order: Order }) {
         <>
           <div className="flex items-baseline justify-between gap-3 text-sm text-forest-700">
             <span>Subtotal</span>
-            <span>{formatPeso(t.subtotal)}</span>
+            <span className="num">{formatPeso(t.subtotal)}</span>
           </div>
           {t.discounts > 0 && (
             <div className="flex items-baseline justify-between gap-3 text-sm text-forest-700">
@@ -50,13 +50,13 @@ function TotalsBreakdown({ order }: { order: Order }) {
                 {order.options.manualDiscount ? ` · ${order.options.manualDiscount.title}` : ""}
                 {order.options.freeSamples ? " · free samples" : ""}
               </span>
-              <span>−{formatPeso(t.discounts)}</span>
+              <span className="num">−{formatPeso(t.discounts)}</span>
             </div>
           )}
           {t.vat > 0 && (
             <div className="flex items-baseline justify-between gap-3 text-sm text-forest-700">
               <span>VAT (12%)</span>
-              <span>+{formatPeso(t.vat)}</span>
+              <span className="num">+{formatPeso(t.vat)}</span>
             </div>
           )}
           {t.shipping > 0 && (
@@ -67,7 +67,7 @@ function TotalsBreakdown({ order }: { order: Order }) {
                   ? ` · ${DELIVERY_METHODS[order.options.deliveryMethod].label}`
                   : ""}
               </span>
-              <span>+{formatPeso(t.shipping)}</span>
+              <span className="num">+{formatPeso(t.shipping)}</span>
             </div>
           )}
         </>
@@ -76,7 +76,7 @@ function TotalsBreakdown({ order }: { order: Order }) {
         <span className="text-sm font-semibold text-forest-900">
           Total <span className="font-normal text-forest-500">(Shopify prices)</span>
         </span>
-        <span className="text-base font-bold text-forest-900">
+        <span className="num text-base font-semibold text-forest-900">
           {formatPeso(order.total)}
         </span>
       </div>

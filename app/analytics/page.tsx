@@ -103,19 +103,19 @@ export default function AnalyticsPage() {
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="rounded-xl border border-forest-200 bg-white p-4 shadow-sm">
             <p className="text-sm text-forest-600">Total Revenue</p>
-            <p className="mt-1 text-2xl font-bold text-forest-900">
+            <p className="num mt-1 text-2xl font-medium text-forest-900">
               {formatPeso(data.totalRevenue)}
             </p>
           </div>
           <div className="rounded-xl border border-forest-200 bg-white p-4 shadow-sm">
             <p className="text-sm text-forest-600">Total Paid Orders</p>
-            <p className="mt-1 text-2xl font-bold text-forest-900">
+            <p className="num mt-1 text-2xl font-medium text-forest-900">
               {data.orderCount.toLocaleString("en-PH")}
             </p>
           </div>
           <div className="rounded-xl border border-forest-200 bg-white p-4 shadow-sm">
             <p className="text-sm text-forest-600">Average Order Value</p>
-            <p className="mt-1 text-2xl font-bold text-forest-900">
+            <p className="num mt-1 text-2xl font-medium text-forest-900">
               {formatPeso(data.avgOrderValue)}
             </p>
           </div>
@@ -157,7 +157,7 @@ export default function AnalyticsPage() {
                         </span>
                       </div>
                       <div className="shrink-0 text-right">
-                        <p className="text-sm font-semibold text-forest-900">
+                        <p className="num text-sm font-semibold text-forest-900">
                           {formatPeso(cafe.revenue)}
                         </p>
                         <p className="text-xs text-forest-500">

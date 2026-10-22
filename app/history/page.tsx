@@ -239,7 +239,7 @@ export default function HistoryPage() {
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
-                    <p className="text-base font-bold text-forest-900">
+                    <p className="num text-base font-semibold text-forest-900">
                       {formatPeso(row.total)}
                     </p>
                     <p className="mt-0.5 flex flex-wrap items-center justify-end gap-1.5 text-sm text-forest-600">

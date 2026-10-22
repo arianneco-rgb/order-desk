@@ -55,7 +55,7 @@ export function StatCard({
     <div className="break-inside-avoid rounded-xl border border-forest-200 bg-white p-4 shadow-sm">
       <p className="text-xs text-forest-500">{label}</p>
       <p className="mt-0.5 flex items-baseline gap-2">
-        <span className="text-xl font-bold text-forest-900">{value}</span>
+        <span className="num text-xl font-medium text-forest-900">{value}</span>
         {stat && <Delta stat={stat} downIsGood={downIsGood} />}
       </p>
       {sub && <p className="mt-0.5 text-[11px] text-forest-500">{sub}</p>}
