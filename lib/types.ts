@@ -41,29 +41,6 @@ export interface PricedItem extends OrderItem {
   warnings: string[];
 }
 
-/**
- * Real BPI notification emails carry no payer name at all (verified
- * against 7 real samples, 2026-07-29) — matching is by amount + reference
- * + (InstaPay only) the sending account's last 4 digits, never a name.
- */
-export interface BpiMatch {
-  amount: number;
-  ref: string;
-  date: string;
-  emailId: string;
-  /** Claims this row in the BPI Transactions sheet — see lib/bpi.ts. */
-  matchKey: string;
-  type: "instapay" | "edpo";
-  /** Only ever set for InstaPay — EDPO carries no sender account info. */
-  fromAccountLast4?: string;
-  sourceBank?: string;
-  /** EDPO is a pre-advice ("will be credited within the day") — false means the money isn't in the account yet. */
-  settled: boolean;
-  warnings: string[];
-  /** "reference" when a proof screenshot's extracted ref matched this row exactly — otherwise "amount". */
-  matchedBy?: "reference" | "amount";
-}
-
 /** What OCR read off a proof screenshot. Best-effort, never authoritative. */
 export interface ProofAnalysis {
   /** Transfer amount in PHP, if legible. */
@@ -82,6 +59,8 @@ export interface ProofOfPayment {
    */
   url: string;
   name: string;
+  /** What the phone called it, kept only so a mis-upload can be identified. */
+  originalName?: string;
   uploadedAt: string;
   /** What this transfer was for — the ledger's Amount Paid. */
   amountPaid?: number;
@@ -98,19 +77,6 @@ export interface ProofOfPayment {
 export interface PaymentInfo {
   /** One or more screenshots/slips — cafes sometimes send partial or split payments. */
   proofs?: ProofOfPayment[];
-  /**
-   * Legacy single match. Orders paid before multi-select shipped still
-   * carry it, so it's read as a one-item list — never written any more.
-   */
-  bpiMatch?: BpiMatch;
-  /**
-   * The transactions Joey has explicitly attached to this order. A list
-   * because cafes split one order across two or more transfers. Nothing
-   * lands here automatically: the app suggests, Joey selects.
-   */
-  bpiMatches?: BpiMatch[];
-  /** True when a match was searched for and none found (drives the error state). */
-  noMatch?: boolean;
   confirmed: boolean;
 }
 
@@ -250,7 +216,7 @@ export interface Order {
    * Viber message, so its lines were never parsed. Recorded because it
    * explains why the order has no real rawMessage and why every line is at
    * confidence 1. Payment review is unchanged — these still land in
-   * Processed and still need a BPI match and Joey's confirmation.
+   * Processed and still need their payment screenshot and Joey's confirmation.
    */
   builtManually?: boolean;
 }

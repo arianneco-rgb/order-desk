@@ -131,8 +131,29 @@ const BPI_MATCHED_AT_COLUMN = 13;
  */
 const PAYMENT_LEDGER_SHEET_ID = '1ZMk4C32nOx6vWCqHzLBbdSEctJQLOKCyNU7zIVoanwc';
 const PAYMENT_LEDGER_TAB = 'Payment Ledger';
-/** The team's own "proof of payments" folder, shared 2026-10-08. */
-const PAYMENT_PROOFS_FOLDER_ID = '1-2bE6yIESrbCVNPoAtEVbXh1jw25XKZX';
+/**
+ * The team's "Proof of Payment" folder on the shared drive (set
+ * 2026-10-22, replacing the older standalone folder).
+ *
+ * This one is shared with named people and the Sales / Management groups
+ * rather than "anyone with the link", which is why PROOF_LINK_PUBLIC
+ * below can be false.
+ */
+const PAYMENT_PROOFS_FOLDER_ID = '1tLk6pERGa8yZjtyZqY-NgbCrHli-CWec';
+/**
+ * Whether each uploaded screenshot is additionally made viewable by
+ * anyone holding its link.
+ *
+ * It used to be, out of necessity: the old folder was one person's, so a
+ * public link was the only way Wheng could open a screenshot from the
+ * ledger. The new folder is shared with the team, so the link already
+ * works for them and a public one only widens who can reach the payment
+ * records — which are the audit trail for the ledger.
+ *
+ * Flip to true ONLY if someone who reconciles can't open the links and
+ * adding them to the folder isn't an option.
+ */
+const PROOF_LINK_PUBLIC = false;
 const PAYMENT_PROOFS_FOLDER_NAME = 'RMC Payment Proofs — Order Desk';
 /**
  * Deliberately short. Payment Date, Bank / Method, Reference No. and
@@ -271,11 +292,13 @@ function savePaymentProof(input) {
     input.fileName || ('proof-' + new Date().getTime())
   );
   const file = paymentProofsFolder_().createFile(blob);
-  // Anyone with the link can view: Wheng reconciles from the sheet and must
-  // be able to open a screenshot without being granted each file one by one.
-  try {
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  } catch (e) { /* domain policy may forbid link sharing — the link still works internally */ }
+  // Otherwise the file simply inherits the folder's sharing, which is the
+  // team. See PROOF_LINK_PUBLIC above for why that's the default now.
+  if (PROOF_LINK_PUBLIC) {
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (e) { /* domain policy may forbid link sharing — the link still works internally */ }
+  }
   return { fileId: file.getId(), url: file.getUrl() };
 }
 

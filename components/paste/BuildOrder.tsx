@@ -220,7 +220,7 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
       <h2 className="text-base font-semibold text-forest-900">Build order</h2>
       <p className="mt-1 text-sm text-forest-600">
         Tap products to add them. This skips the Queue and creates the Shopify draft straight away —
-        the order then waits in Processed for its BPI payment match, same as any other.
+        the order then waits in Processed for its payment screenshot, same as any other.
       </p>
 
       {!cafe && (
@@ -417,8 +417,8 @@ export function BuildOrder({ cafe }: { cafe: CafeCustomer | null }) {
       <Modal open={confirmOpen} onClose={() => !busy && setConfirmOpen(false)} title="Create the Shopify draft?">
         <p className="text-sm text-forest-700">
           Creates a <strong>real Shopify draft</strong> for <strong>{cafe?.name}</strong> and sends it
-          to <strong>Processed</strong>. Payment is still confirmed there, with the usual BPI match —
-          nothing is marked paid here.
+          to <strong>Processed</strong>. Payment is still confirmed there, against the cafe&apos;s
+          payment screenshot — nothing is marked paid here.
         </p>
         <ul className="mt-3 space-y-1 rounded-md bg-forest-50 p-3 text-sm text-forest-800">
           {lines.map((l) => (

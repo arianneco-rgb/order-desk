@@ -11,7 +11,6 @@ interface Modes {
   shopify: string;
   sheets: string;
   parser: string;
-  bpi: string;
   db: string;
   auth: string;
 }

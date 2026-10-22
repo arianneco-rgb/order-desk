@@ -8,7 +8,6 @@ interface Modes {
   shopify: string;
   sheets: string;
   parser: string;
-  bpi: string;
   db: string;
   auth: string;
 }
@@ -77,7 +76,7 @@ export function SettingsMenu({
   }, [open]);
 
   const anyMock =
-    modes && (modes.shopify !== "live" || modes.parser !== "claude" || modes.bpi !== "live");
+    modes && (modes.shopify !== "live" || modes.parser !== "claude");
 
   const panel = (
     <div
@@ -151,7 +150,7 @@ export function SettingsMenu({
                 "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
                 anyMock ? "bg-amber-200/90 text-amber-900" : "bg-forest-200 text-forest-900"
               )}
-              title={`Shopify: ${modes.shopify} · Sheets: ${modes.sheets} · Parser: ${modes.parser} · BPI: ${modes.bpi} · DB: ${modes.db}`}
+              title={`Shopify: ${modes.shopify} · Sheets: ${modes.sheets} · Parser: ${modes.parser} · DB: ${modes.db}`}
             >
               <span className={clsx("h-1.5 w-1.5 rounded-full", anyMock ? "bg-amber-600" : "bg-forest-600")} />
               {anyMock ? "Demo data in use" : "All systems live"}

@@ -1,15 +1,14 @@
 "use client";
 
-import { useVisibleInterval } from "@/lib/use-visible-interval";
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { BpiMatch, Order, ProofAnalysis, ProofOfPayment } from "@/lib/types";
+import { useEffect, useRef, useState } from "react";
+import type { Order, ProofAnalysis, ProofOfPayment } from "@/lib/types";
 import { formatPeso } from "@/lib/conversions";
+import { blockingReason, paidSummary } from "@/lib/payments";
 import { warmUpOcr } from "@/lib/ocr";
 import { CopyButton } from "@/components/CopyButton";
 import { TestBadge } from "@/components/TestBadge";
 import { Modal } from "@/components/Modal";
 import { StagedProgress, Spinner } from "@/components/StagedProgress";
-import { PaymentMatcher } from "./PaymentMatcher";
 import { FULFILMENT_TEMPLATES, fulfilmentReplyFor } from "@/lib/templates";
 import { formatTime } from "./format";
 
@@ -20,7 +19,6 @@ const MAX_PROOFS = 8;
 
 /** Server order of confirm-payment, with measured typical durations. */
 const CONFIRM_STEPS = [
-  { label: "Claiming the payment…", ms: 1800 },
   { label: "Marking the order paid in Shopify…", ms: 2200 },
   { label: "Recording it — almost there…", ms: 1200 },
 ];
@@ -47,7 +45,7 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
-/** Right pane: proof upload → BPI match → confirm payment → paid replies. */
+/** Right pane: proof upload → priced transfers → confirm payment → paid replies. */
 export function PaymentPane({
   order,
   onOrderUpdate,
@@ -55,24 +53,12 @@ export function PaymentPane({
   order: Order | null;
   onOrderUpdate: (order: Order) => void;
 }) {
-  const [simulated, setSimulated] = useState(false);
-  const [checking, setChecking] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [manualOverride, setManualOverride] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Distinct from "no match yet" — a genuine failure to reach the inbox
-  // (bad Apps Script deployment/secret, wrong Gmail account, etc.), so it's
-  // never silently indistinguishable from a search that ran and found
-  // nothing. A 409 (another money-route action mid-flight) is excluded —
-  // that's benign lock contention, not a real error, and clears itself on
-  // the next poll.
-  const [inboxError, setInboxError] = useState<string | null>(null);
   const [removingIndex, setRemovingIndex] = useState<number | null>(null);
   const [lightbox, setLightbox] = useState<ProofOfPayment | null>(null);
-  const [candidates, setCandidates] = useState<BpiMatch[]>([]);
-  const [suggestion, setSuggestion] = useState<BpiMatch | null>(null);
-  const [picking, setPicking] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   // Screenshots wait here until Joey has priced each one. Cafes that max out
   // a transfer limit send two or three slips for a single order, and each
@@ -82,30 +68,24 @@ export function PaymentPane({
   const [uploadedCount, setUploadedCount] = useState(0);
 
   const orderId = order?.id ?? null;
-  // Legacy single-match orders are read as a one-item list.
-  const selectedMatches =
-    order?.payment.bpiMatches ?? (order?.payment.bpiMatch ? [order.payment.bpiMatch] : []);
-  const hasSelection = selectedMatches.length > 0;
   const isPaid = order?.status === "paid";
   const proofs = order?.payment.proofs ?? [];
-  // What the ledger already holds for this order, and what's staged on top.
-  // Same rule the server uses, so the running total matches the sheet.
-  const loggedPaid = proofs.reduce(
-    (sum, p) => sum + (p.amountPaid ?? order?.total ?? 0),
-    0
-  );
+  // One rule for what this order has been paid, shared with the confirm
+  // route (lib/payments.ts) — so the figure on screen is the figure the
+  // server enforces and the figure that reached the ledger.
+  const summary = order ? paidSummary(order) : null;
+  const loggedPaid = summary?.paid ?? 0;
+  const unpriced = summary?.unpriced ?? 0;
   const pendingPaid = pending.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
   const stillShort = (order?.total ?? 0) - loggedPaid - pendingPaid;
+  // Why the confirm button is disabled, in the words Joey will read.
+  const blocked = order && !isPaid ? blockingReason(order) : null;
 
   // Reset per-order UI state when the selection changes.
   useEffect(() => {
     setManualOverride(false);
     setError(null);
-    setSimulated(false);
-    setInboxError(null);
     setLightbox(null);
-    setCandidates([]);
-    setSuggestion(null);
     // Staged-but-unlogged screenshots belong to the order they were picked
     // for — carrying them to the next selection would log one cafe's
     // transfer against another's order.
@@ -113,70 +93,6 @@ export function PaymentPane({
     setUploadedCount(0);
     if (fileRef.current) fileRef.current.value = "";
   }, [orderId]);
-
-  const checkInbox = useCallback(async () => {
-    if (!orderId) return;
-    setChecking(true);
-    try {
-      const res = await fetch(`/api/orders/${orderId}/bpi-match`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        if (res.status !== 409) {
-          setInboxError(
-            typeof data.error === "string" ? data.error : `Couldn't check the inbox (HTTP ${res.status}).`
-          );
-        }
-        return;
-      }
-      setInboxError(null);
-      setSimulated(!!data.simulated);
-      setCandidates(Array.isArray(data.candidates) ? data.candidates : []);
-      setSuggestion(data.suggestion ?? null);
-      if (data.order) onOrderUpdate(data.order);
-    } catch {
-      setInboxError("Couldn't reach Order Desk to check the inbox — check your connection.");
-    } finally {
-      setChecking(false);
-    }
-  }, [orderId, onOrderUpdate]);
-
-  /** Sends the WHOLE selection; an empty list clears it. */
-  async function applySelection(matchKeys: string[]) {
-    if (!orderId) return;
-    setPicking(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/orders/${orderId}/bpi-match`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ matchKeys }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || `Couldn't apply that transaction (HTTP ${res.status}).`);
-      }
-      onOrderUpdate(data.order);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't apply that transaction.");
-    } finally {
-      setPicking(false);
-    }
-  }
-
-  // Check on select, then poll every 5s while this order is selected & unmatched.
-  const shouldPoll =
-    !!order && order.status === "draft_created" && !order.payment.confirmed;
-  useEffect(() => {
-    if (!shouldPoll) return;
-    void checkInbox();
-  }, [shouldPoll, checkInbox]);
-  // 8s rather than 5s, and paused while the tab is hidden: this poll reads
-  // the BPI Transactions sheet through Apps Script, which is the slowest and
-  // flakiest call the app makes. A transfer that hasn't landed yet won't
-  // land three seconds sooner for being asked more often.
-  useVisibleInterval(() => {
-    if (shouldPoll) void checkInbox();
-  }, 8000);
 
   async function onFilesChosen(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
@@ -305,7 +221,6 @@ export function PaymentPane({
       }
     }
     setUploading(false);
-    void checkInbox(); // re-check the inbox right after proof upload
   }
 
   async function removeProof(index: number) {
@@ -628,40 +543,54 @@ export function PaymentPane({
             )}
           </div>
 
-          {/* BPI payment verification */}
+          {/* Payment record — with the email matching gone, the screenshots
+              and the amounts beside them ARE the reconciliation. This is
+              the same sum lib/payments.ts gives the confirm route. */}
           <div>
-            <p className="text-sm font-semibold text-forest-800">
-              BPI payment verification
-            </p>
-            {inboxError ? (
-              <div className="mt-2 rounded-lg border border-red-300 bg-red-50 p-3">
-                <p className="text-sm font-semibold text-red-900">Couldn&apos;t check the inbox</p>
-                <p className="mt-0.5 text-sm text-red-700">{inboxError}</p>
-                <button
-                  type="button"
-                  onClick={() => void checkInbox()}
-                  disabled={checking}
-                  className="mt-2 rounded-md border border-red-400 bg-white px-2.5 py-1 text-xs font-semibold text-red-900 transition-colors hover:bg-red-100 disabled:opacity-50"
-                >
-                  {checking ? "Checking…" : "Try again"}
-                </button>
+            <p className="text-sm font-semibold text-forest-800">Payment record</p>
+            <div className="mt-2 rounded-lg border border-forest-200 bg-forest-50/50 p-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-sm text-forest-700">
+                  {proofs.length} {proofs.length === 1 ? "transfer" : "transfers"} logged
+                </span>
+                <span className="num text-base font-semibold text-forest-900">
+                  {formatPeso(loggedPaid)}
+                </span>
               </div>
-            ) : (
-              <PaymentMatcher
-                orderTotal={order.total}
-                selected={selectedMatches}
-                suggestion={suggestion}
-                candidates={candidates}
-                simulated={simulated}
-                busy={picking}
-                onChange={(keys) => void applySelection(keys)}
-              />
-            )}
+              <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-forest-200 pt-1.5">
+                <span className="text-sm text-forest-600">Order total</span>
+                <span className="num text-sm text-forest-700">{formatPeso(order.total)}</span>
+              </div>
+              {proofs.length === 0 ? (
+                <p className="mt-2 text-sm text-forest-600">
+                  Nothing logged yet — upload the cafe&apos;s screenshot above.
+                </p>
+              ) : unpriced > 0 ? (
+                <p className="mt-2 text-sm font-medium text-amber-800">
+                  {unpriced === 1
+                    ? "One screenshot has no amount against it."
+                    : `${unpriced} screenshots have no amount against them.`}{" "}
+                  It isn&apos;t counted above.
+                </p>
+              ) : summary && summary.short > 0.009 ? (
+                <p className="mt-2 text-sm font-medium text-amber-800">
+                  {formatPeso(summary.short)} short of the order total.
+                </p>
+              ) : summary && summary.short < -0.009 ? (
+                <p className="mt-2 text-sm text-forest-600">
+                  Overpaid by {formatPeso(-summary.short)} — cafes often round up.
+                </p>
+              ) : (
+                <p className="mt-2 text-sm font-medium text-ok">
+                  Covered in full ✓
+                </p>
+              )}
+            </div>
           </div>
 
           {/* Confirm */}
           <div>
-            {!hasSelection && (
+            {blocked && proofs.length > 0 && (
               <label className="mt-2 flex items-start gap-2 text-sm text-forest-700">
                 <input
                   type="checkbox"
@@ -669,23 +598,26 @@ export function PaymentPane({
                   onChange={(e) => setManualOverride(e.target.checked)}
                   className="mt-0.5 h-4 w-4 rounded border-forest-300 accent-forest-700"
                 />
-                I verified this transfer manually (no BPI match)
+                Mark it paid anyway — I&apos;ve checked this transfer myself
               </label>
+            )}
+            {blocked && (
+              <p className="mt-2 text-sm text-forest-600">{blocked}</p>
             )}
             <button
               type="button"
               onClick={confirmPayment}
-              disabled={confirming || (!hasSelection && !manualOverride)}
+              disabled={confirming || (!!blocked && !manualOverride)}
               className="mt-3 flex w-full items-center justify-center gap-2 rounded-md bg-forest-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-forest-800 disabled:opacity-50"
             >
               {confirming && <Spinner className="h-4 w-4 text-white" />}
               {confirming ? "Confirming…" : "✓ Confirm payment · mark paid"}
             </button>
             {confirming && (
-              // Marking paid is three external round trips (claim the payment
-              // in the sheet, complete the Shopify draft, record it), so it's
-              // the longest wait in the app. Naming the step in flight makes
-              // the wait legible instead of an unexplained frozen button.
+              // Marking paid is two external round trips (complete the
+              // Shopify draft, record it to History), so it's the longest
+              // wait in the app. Naming the step in flight makes the wait
+              // legible instead of an unexplained frozen button.
               <StagedProgress
                 className="mt-2"
                 steps={CONFIRM_STEPS}

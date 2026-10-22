@@ -3,14 +3,20 @@ import { getCatalog, completeDraftAsPaid } from "@/lib/shopify";
 import { priceItems, itemsText } from "@/lib/pricing";
 import { paidConfirmationReply } from "@/lib/templates";
 import { appendOrderHistory } from "@/lib/sheets";
-import { attachedMatches, claimTransactions } from "@/lib/bpi";
+import { blockingReason, paidSummary } from "@/lib/payments";
 import { getOrder, saveOrder, tryLockOrder, unlockOrder } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Joey's "Confirm payment · mark paid" click. Requires a BPI match — or an
- * explicit manual override when he has verified the transfer himself.
+ * Joey's "Confirm payment · mark paid" click.
+ *
+ * The evidence is the uploaded screenshots and the amount she put against
+ * each one — Order Desk no longer cross-checks BPI transfer emails, so
+ * there is nothing else to verify against. Every screenshot must be
+ * priced and the total must cover the order, unless she explicitly ticks
+ * the override (a cafe short-paying by withholding tax is routine).
+ *
  * Marks the Shopify order paid, appends to the Order History sheet tab,
  * and reveals the paid-confirmation reply.
  */
@@ -40,43 +46,31 @@ export async function POST(
     const body = (await request.json().catch(() => ({}))) as {
       manualOverride?: boolean;
     };
-    // With recon moved to Wheng's weekly pass, the uploaded screenshot IS
-    // the evidence this order was paid — so it's the one thing that can't be
-    // skipped. Overriding the BPI match is still allowed; overriding the
-    // absence of any proof at all is not.
-    if ((order.payment.proofs ?? []).length === 0) {
+    // A missing screenshot is never overridable — it is the only record
+    // that this order was paid at all. An unpriced or short one is, because
+    // Joey can have a reason the app can't see.
+    const proofs = order.payment.proofs ?? [];
+    if (proofs.length === 0) {
       return NextResponse.json(
         {
           error:
-            "Upload the payment screenshot first — it's what Wheng reconciles against.",
+            "Upload the payment screenshot first — it's the only record that this order was paid.",
         },
         { status: 409 }
       );
     }
-
-    const selected = attachedMatches(order);
-    if (selected.length === 0 && !body.manualOverride) {
-      return NextResponse.json(
-        {
-          error:
-            "No BPI transaction selected yet — pick one from the list, or tick the manual-verification box.",
-        },
-        { status: 409 }
-      );
+    const blocked = blockingReason(order);
+    if (blocked && !body.manualOverride) {
+      return NextResponse.json({ error: blocked }, { status: 409 });
     }
-
-    // Split payments are the reason several can be attached, so the check is
-    // on the SUM. Under-payment is refused unless Joey overrides; a small
-    // over-payment is normal (cafes round up) and passes with a warning.
-    const paid = selected.reduce((sum, m) => sum + m.amount, 0);
-    if (selected.length > 0 && paid + 0.009 < order.total && !body.manualOverride) {
-      return NextResponse.json(
-        {
-          error: `Selected transfers total ₱${paid.toLocaleString()} but the order is ₱${order.total.toLocaleString()} — add the missing transfer, or tick the manual-verification box.`,
-        },
-        { status: 409 }
-      );
-    }
+    // Overriding is allowed, but it shouldn't be silent — if the order is
+    // being marked paid for less than it's worth, say so on the way out so
+    // the gap is visible now rather than at Wheng's recon.
+    const summary = paidSummary(order);
+    const paymentNote =
+      blocked && body.manualOverride
+        ? `Marked paid on your say-so: the screenshots total ₱${summary.paid.toLocaleString("en-PH")} against an order of ₱${order.total.toLocaleString("en-PH")}.`
+        : undefined;
 
     // The catalog is only needed at the end (to render the items line on the
     // paid reply) and depends on nothing here, so start fetching it now and
@@ -86,22 +80,6 @@ export async function POST(
     // Swallow here so a rejection can't surface as an unhandled rejection
     // while we're awaiting the Shopify call; the real await below rethrows.
     catalogPromise.catch(() => {});
-
-    // Claim the transaction row NOW, before touching Shopify — this is the
-    // actual dedupe that stops the same payment being applied to two
-    // different orders (a candidate can be shown to several same-amount
-    // orders at preview time; only one can win the claim here). This must
-    // stay sequential: claiming after Shopify would let a double-submit mark
-    // two orders paid against one transfer.
-    if (selected.length > 0) {
-      const claim = await claimTransactions(
-        order,
-        selected.map((m) => m.matchKey)
-      );
-      if (!claim.ok) {
-        return NextResponse.json({ error: claim.error }, { status: 409 });
-      }
-    }
 
     const { orderId } = await completeDraftAsPaid(order);
     const catalog = await catalogPromise;
@@ -136,7 +114,7 @@ export async function POST(
         "Order marked paid, but recording it to History failed — add the row manually.";
     }
 
-    return NextResponse.json({ order, sheetWarning });
+    return NextResponse.json({ order, sheetWarning, paymentNote });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Payment confirm failed." },

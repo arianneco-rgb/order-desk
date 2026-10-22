@@ -1,12 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrder, saveOrder } from "@/lib/store";
-import type { ProofAnalysis } from "@/lib/types";
+import type { Order, ProofAnalysis } from "@/lib/types";
 import { appendPaymentLedger, savePaymentProofToDrive } from "@/lib/payment-ledger";
+import { proofAmount } from "@/lib/payments";
 import type { ProofOfPayment } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 const MAX_PROOFS = 8;
+
+/**
+ * Extension from the data URL's own mime type. Without one, Drive serves
+ * the file as a blob and the ledger's link opens a download prompt
+ * instead of a preview — which defeats the point of the link.
+ */
+function extensionFor(dataUrl: string): string {
+  const mime = dataUrl.match(/^data:image\/([a-z0-9.+-]+)/i)?.[1]?.toLowerCase();
+  if (!mime) return "";
+  return mime === "jpeg" || mime === "jpg" ? ".jpg" : `.${mime}`;
+}
+
+/**
+ * `[POP] #D3717 - 2.jpg`
+ *
+ * Whatever the phone called it ("IMG_0234.JPG", "Screenshot 2026-10-22 at
+ * 11.30.14.png") tells nobody which order it belongs to. Named this way
+ * the proofs folder sorts by order on its own, and a row in the ledger can
+ * be traced to a file without opening anything.
+ *
+ * The number is the transfer's position on the order, so a split payment
+ * reads as "- 1" and "- 2" in the order the cafe sent them.
+ */
+function proofFileName(order: Order, paymentNo: number, dataUrl: string): string {
+  const orderNo = order.shopifyDraftName ?? order.id;
+  return `[POP] ${orderNo} - ${paymentNo}${extensionFor(dataUrl)}`;
+}
 
 /**
  * Attach a proof-of-payment screenshot (stored as a data URL in memory).
@@ -70,7 +98,9 @@ export async function POST(
 
   const proof: ProofOfPayment = {
     url: body.dataUrl,
-    name: body.fileName || `proof-${proofs.length + 1}`,
+    // Renamed on the way in, never kept as the phone sent it.
+    name: proofFileName(order, proofs.length + 1, body.dataUrl),
+    originalName: body.fileName?.trim().slice(0, 200) || undefined,
     uploadedAt: new Date().toISOString(),
     amountPaid: amountGiven,
     notes: body.notes?.trim().slice(0, 300) || undefined,
@@ -104,14 +134,16 @@ export async function POST(
   let ledgerWarning: string | undefined;
   if (!order.isTest) {
     try {
-      const amount = proof.amountPaid ?? order.total;
+      // Same rule the pane shows and the confirm route enforces — a blank
+      // amount only means "the whole order" when this is the only transfer.
+      const amount = proofAmount(proof, proofs.length - 1, proofs, order.total);
       const logged = await appendPaymentLedger({
         orderNo: order.shopifyDraftName ?? order.id,
         orderDeskId: order.id,
         customerName: order.company,
         orderTotal: order.total,
         screenshotUrl: driveUrl || "",
-        amountPaid: amount,
+        amountPaid: amount ?? 0,
         notes: proof.notes || "",
       });
       if (logged) proof.ledgerLogged = true;

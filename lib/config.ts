@@ -6,7 +6,6 @@ import { appsScriptConfigured } from "./apps-script";
 export type ShopifyMode = "live" | "snapshot";
 export type SheetsMode = "live" | "mock";
 export type ParserMode = "claude" | "fallback";
-export type BpiMode = "live" | "simulated";
 export type DbMode = "supabase" | "memory";
 
 export function shopifyMode(): ShopifyMode {
@@ -25,14 +24,6 @@ export function sheetsMode(): SheetsMode {
 
 export function parserMode(): ParserMode {
   return process.env.ANTHROPIC_API_KEY ? "claude" : "fallback";
-}
-
-export function bpiMode(): BpiMode {
-  // Same Apps Script bridge as Sheets — it searches Gmail under the
-  // deploying Google account's own permissions (see scripts/apps-script/Code.gs).
-  // Whoever deployed it must be the account that receives BPI transfer
-  // notification emails.
-  return appsScriptConfigured() ? "live" : "simulated";
 }
 
 export function dbMode(): DbMode {
@@ -61,7 +52,6 @@ export function modeSummary() {
     shopify: shopifyMode(),
     sheets: sheetsMode(),
     parser: parserMode(),
-    bpi: bpiMode(),
     db: dbMode(),
     auth: authEnabled() ? "on" : "off",
   };

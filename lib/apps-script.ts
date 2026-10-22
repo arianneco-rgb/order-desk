@@ -1,16 +1,18 @@
 // Shared client for the Order Desk Apps Script bridge — one deployed Web
 // App handles Google Sheets (Customers / Order History / Invoice
-// generator / the BPI Transactions log). Apps Script runs under a regular
+// generator / the Payment Ledger) and the proof-screenshot uploads to
+// Drive. Apps Script runs under a regular
 // Google account's own permissions, so it needs no service account and no
 // Workspace admin approval — this exists specifically because domain-wide
 // delegation was blocked by the org's admin. See
 // scripts/apps-script/Code.gs and SETUP.md for deployment steps.
 //
-// BPI email reading itself happens in a completely SEPARATE Apps Script
-// project (scripts/apps-script/BpiMatching.gs) deployed under whoever
-// actually receives BPI transfer emails — it logs transactions into a
-// shared sheet on its own timer, which THIS bridge just reads. Order Desk
-// never calls that other project directly, so it's not part of this file.
+// Order Desk used to also read BPI transfer emails, through a separate
+// Apps Script project, to cross-check payments. That was dropped on
+// 2026-10-22: payment is now evidenced by the screenshot the cafe sends
+// and the amount Joey puts against it (lib/payments.ts). Nothing here
+// talks to that project any more — if it's still deployed and running on
+// its timer, it's only filling a sheet nobody reads.
 //
 // The web app has no real auth of its own (Apps Script "Anyone" access is
 // unauthenticated at the HTTP layer), so every call carries a shared secret

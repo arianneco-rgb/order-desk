@@ -18,7 +18,7 @@ const MAX_QTY = 10_000;
  *
  * What it skips is the QUEUE stage — the parse-and-review step — not the
  * payment review. The order arrives in Processed exactly as a pasted one
- * does: draft created, awaiting payment, with BPI matching and Joey's
+ * does: draft created, awaiting payment, with the screenshot and Joey's
  * "Confirm payment · mark paid" click still required. Nothing here records
  * money as received.
  *
@@ -131,7 +131,7 @@ export async function POST(request: NextRequest) {
     await saveOrder(order);
 
     // Stops here. Payment stays unconfirmed so the order shows up in
-    // Processed with the usual BPI match and confirm step — the History
+    // Processed with the usual screenshot and confirm step — the History
     // row is written when Joey actually confirms payment, not now.
     order.builtManually = true;
     await saveOrder(order);

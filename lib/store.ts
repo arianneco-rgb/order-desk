@@ -168,7 +168,7 @@ export async function listOrders(): Promise<Order[]> {
 
 /**
  * Every current caller (the polled /api/orders route, tick(), duplicate
- * detection, BPI matching) only ever needs orders that are still "in
+ * detection) only ever needs orders that are still "in
  * flight" — none of them read or display paid orders, and Processed
  * already has its own client-side fallback for a JUST-paid order dropping
  * out of the next poll. Paid orders are the fastest-growing, least-needed
